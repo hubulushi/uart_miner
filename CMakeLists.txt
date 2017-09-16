@@ -3,21 +3,6 @@ project(uart_miner C ASM CXX)
 
 set(CMAKE_C_STANDARD 11)
 
-#include_directories(/Library/Developer/CommandLineTools/usr/include/)
-
-#openssl 库设置
-include_directories(/usr/local/opt/openssl/include)
-link_directories(/usr/local/opt/openssl/lib)
-
-#jansson 库设置
-include_directories(/usr/local/opt/jansson/include)
-link_directories(/usr/local/opt/jansson/lib)
-
-#curl 库设置
-include_directories(/usr/local/opt/curl/include)
-link_directories(/usr/local/opt/curl/lib)
-
-
 set_source_files_properties(asm/sha2-x64.S PROPERTIES COMPILE_FLAGS "-x assembler-with-cpp")
 set_source_files_properties(src/uint256.cpp PROPERTIES COMPILE_FLAGS "-Wno-effc++")
 

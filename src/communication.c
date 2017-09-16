@@ -198,12 +198,16 @@ uint8_t board_get_fifo(board_t *board, uint8_t chip_id){
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
     //             1      0       0       1       0       0       0       0
-    //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH   RESET    ERR
+    //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH  RESTART   ERR
     //             1      0       0       0       0       1       0       0
     uint8_t ctrl_data[2] = {0x00, 0x00};
     board_read_reg(board, chip_id, CTRL_REG, ctrl_data);
-    uint8_t nonce_full = (uint8_t) ((*ctrl_data)&0x07);
-    return nonce_full;
+    uint8_t fifo_status = (uint8_t) ((*ctrl_data)&0x07);
+    if (fifo_status < 3)
+        return 1;
+    else
+        return 0;
+
 }
 uint8_t board_display_rate(board_t *board){
     uint8_t hash_rate[4] = {0};
@@ -216,7 +220,6 @@ uint8_t board_display_rate(board_t *board){
     }
     return 0;
 }
-
 uint8_t board_display_counter(board_t *board){
     uint8_t hash_counter[8] = {0};
     uint8_t nonce_counter[4] = {0};
@@ -228,8 +231,6 @@ uint8_t board_display_counter(board_t *board){
     }
     return 0;
 }
-
-
 uint8_t board_flush_fifo(board_t *board, uint8_t chip_id){
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
@@ -250,7 +251,6 @@ uint8_t board_debug_chips(board_t *board, uint8_t chip_id, reg_t reg_type){
     }
     printf("\n");
 }
-
 uint8_t board_soft_reset_chip(board_t *board, uint8_t chip_id){
     //    read firstly, use "and" to START bit to combine.
     //CTRL_REG:

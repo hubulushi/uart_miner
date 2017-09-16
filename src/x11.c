@@ -106,7 +106,6 @@ int scanhash_x11(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *ha
 		x11hash(hash, endiandata);
 
 		if (hash[7] <= Htarg && fulltest(hash, ptarget)) {
-			work_set_target_ratio(work, hash);
 			pdata[19] = nonce;
 			*hashes_done = pdata[19] - first_nonce;
 			return 1;

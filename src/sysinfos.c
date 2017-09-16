@@ -220,7 +220,7 @@ void cpu_getmodelid(char *outbuf, size_t maxsz)
 			}
 		}
 		if (cpufam && model && stepping) {
-			snprintf(outbuf, maxsz, "%x:%02x%02x:%d", cpufam, model, stepping, num_cpus);
+			snprintf(outbuf, maxsz, "%x:%02x%02x", cpufam, model, stepping);
 			outbuf[maxsz-1] = '\0';
 			break;
 		}

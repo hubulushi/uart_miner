@@ -642,7 +642,6 @@ static void *miner_thread(void *userdata) {
 
 static void *uart_miner_thread(void *userdata) {
     struct thr_info *mythr = (struct thr_info *) userdata;
-    int thr_id = mythr->id;
     struct work zero_work;
     work_free(&zero_work);
     struct work work;
@@ -650,6 +649,7 @@ static void *uart_miner_thread(void *userdata) {
     memset(&work, 0, sizeof(work));
     board_t *board = malloc(sizeof(board_t));
     board_init_chip_array(board);
+    uint8_t need_regen = 0;
     while (!g_work.targetdiff);
     size_t xnonce2_len = g_work.xnonce2_len;
     uint8_t *work_id = malloc(8 * xnonce2_len);
@@ -673,6 +673,11 @@ static void *uart_miner_thread(void *userdata) {
             le32enc(board->chip_array[0].target + 4, work.target[7]);
             board_set_target(board);
         }
+//
+        if (need_regen){
+            stratum_gen_work(&stratum, &g_work);
+            need_regen = 0;
+        }
 //    version 4*1B   prev_hash 4*8B   merkle_root 4*8B   ntime 4*1B   nbits 4*1B
 //		data_in has changed
         if (memcmp(work.data, g_work.data, 76)) {
@@ -693,8 +698,14 @@ static void *uart_miner_thread(void *userdata) {
             board_set_workid(board, 0);
             board_start_x11(board, 0);
         }
-
         pthread_mutex_unlock(&g_work_lock);
+
+
+//          make sure nonce is not full
+        for (uint8_t j = 0; j < board->chip_nums; ++j)
+            if(need_regen || board_get_fifo(board, j))
+                need_regen = 1;
+
         if (board_wait_for_nonce(board)) {
             work_free(&upload_work);
             work_copy(&upload_work, &work);
@@ -1150,17 +1161,14 @@ static int thread_create(struct thr_info *thr, void *func) {
     return err;
 }
 
-
 void get_defconfig_path(char *out, size_t bufsize, char *argv0);
 
 int main(int argc, char *argv[]) {
     struct thr_info *thr;
     long flags;
-    int i, err;
+    int err;
 
     pthread_mutex_init(&applog_lock, NULL);
-
-    num_cpus = 1;
 
     /* parse command line */
     // parse_cmdline(argc, argv);
