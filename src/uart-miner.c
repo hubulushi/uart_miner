@@ -280,9 +280,6 @@ static bool submit_upstream_work(CURL *curl, struct work *work) {
              "{\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
              rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
     if (opt_debug) {
-        applog(LOG_DEBUG,
-               "submitting data: {\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
-               rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
         uint32_t *pdata = work->data;
         uint32_t datain[20], hash[8];
         for (int k = 0; k < 19; k++)
@@ -291,12 +288,10 @@ static bool submit_upstream_work(CURL *curl, struct work *work) {
         x11hash(hash, datain);
         work_set_target_ratio(work, hash);
         stratum.sharediff = work->sharediff;
-//        Open here to enable data_in hash_out for each submit data
-//        char* datain_str = abin2hex((uchar*) datain, 80);
-//        char* hash_str = abin2hex((uchar*) hash, 32);
-//        applog(LOG_DEBUG, "data_in: %s", datain_str);
-//        applog(LOG_DEBUG, "hash_out: %s", hash_str);
-        applog(LOG_DEBUG, "share diff: %0.8f", stratum.sharediff);
+//        Open here to enable print upload data
+//        applog(LOG_DEBUG,
+//               "submitting data: {\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
+//               rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
     }
     free(xnonce2str);
 
@@ -674,10 +669,10 @@ static void *uart_miner_thread(void *userdata) {
             board_set_target(board);
         }
 //
-        if (need_regen){
-            stratum_gen_work(&stratum, &g_work);
-            need_regen = 0;
-        }
+//        if (need_regen) {
+//            stratum_gen_work(&stratum, &g_work);
+//            need_regen = 0;
+//        }
 //    version 4*1B   prev_hash 4*8B   merkle_root 4*8B   ntime 4*1B   nbits 4*1B
 //		data_in has changed
         if (memcmp(work.data, g_work.data, 76)) {
@@ -703,7 +698,7 @@ static void *uart_miner_thread(void *userdata) {
 
 //          make sure nonce is not full
         for (uint8_t j = 0; j < board->chip_nums; ++j)
-            if(need_regen || board_get_fifo(board, j))
+            if (need_regen || board_get_fifo(board, j))
                 need_regen = 1;
 
         if (board_wait_for_nonce(board)) {
@@ -714,7 +709,19 @@ static void *uart_miner_thread(void *userdata) {
             if (!submit_work(mythr, &upload_work)) {
                 break;
             }
-            board_display_rate(board);
+            if (opt_debug) {
+                uint32_t *pdata = upload_work.data;
+                uint32_t datain[20], hash[8];
+                for (int k = 0; k < 20; k++)
+                    be32enc(&datain[k], pdata[k]);
+                x11hash(hash, datain);
+                work_set_target_ratio(&upload_work, hash);
+                char *datain_str = abin2hex((uchar *) datain, 80);
+                char *hash_str = abin2hex((uchar *) hash, 32);
+                applog(LOG_DEBUG, "data_in: %s", datain_str);
+                applog(LOG_DEBUG, "hash_out: %s", hash_str);
+                applog(LOG_DEBUG, "share diff: %.8f", upload_work.sharediff);
+            }
         }
     }
 }
@@ -1230,8 +1237,6 @@ int main(int argc, char *argv[]) {
     if (thread_create(thr, workio_thread)) {
         applog(LOG_ERR, "work thread create failed");
         return 1;
-    } else {
-        applog(LOG_DEBUG, "workio start");
     }
 
 // open stratum thread

@@ -1,0 +1,9 @@
+{
+  "url" : "stratum+tcp://ispace.co.uk:4115",
+  "userpass" : "mlien.miner:x",
+  "algo" : "tty",
+  "tty-path" : "/dev/ttyUSB0:9600",
+  "threads" : 1,
+  "debug" : true,
+  "show-diff": true
+}

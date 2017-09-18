@@ -4,9 +4,9 @@ uint8_t reg_size[24]= {1, 4, 2, 2, 76, 64, 2, 4, 4, 1, 1, 8, 4, 32, 32, 4, 4, 1,
 
 uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
     // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
-//    if (board->current_chip == chip_id)
-//        return 0;
-//    board->current_chip = chip_id;
+    if (board->current_chip == chip_id)
+        return 0;
+    board->current_chip = chip_id;
     applog(LOG_SERIAL, "choosing chip %d", chip_id);
     uint8_t buf = 0xFF;
     uint8_t data_in = 0x00;
@@ -132,7 +132,7 @@ uint8_t board_init_chip_array(board_t *board){
     serial_write(&board->cmd_serial, &data_in, 1);
     serial_read(&board->cmd_serial, buf, 1, -1);
     board->chip_nums = (uint8_t) (*(buf) - 0x80);
-    applog(LOG_INFO,"board_open_chip_array succeeded, has %d chips", board->chip_nums);
+    applog(LOG_INFO,"miner has %d chips, serial open succeeded", board->chip_nums);
     for (uint8_t i = 0; i < board->chip_nums; ++i) {
 //      i = 0 means broadcast address
         *board->chip_array[i].chip_id = i;
