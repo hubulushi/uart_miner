@@ -149,17 +149,18 @@ uint8_t board_init_chip_array(board_t *board){
     board_assign_nonce(board);
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
+    for (int j = 0; j < board->chip_nums; ++j) {
+        board_start_self_test(board, j);
+    }
+    board_write_reg(board, 0, CORE_SEL_REG, core_sel);
     return 0;
 }
-
-
 uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
     //             1      0       0       1       1       0       0       0
     //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH  RESTART   ERR
     //             1      0       0       0       0       0       0       0
-    //TODO: RTL bug should be fixed here, can't return to normal.
     uint8_t test_cmd[2]={0xC8, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, test_cmd);
     sleep(1);
@@ -168,12 +169,12 @@ uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
         applog(LOG_ERR, "chip %d error", chip_id);
         uint8_t disable_chip_cmd[2] = {0x80, 0x00};
         board_write_reg(board, chip_id, CTRL_REG, disable_chip_cmd);
+        board->chip_array[chip_id].disable = 1;
         } else {
         uint8_t disable_test_cmd[2] = {0x90, 0x80};
         board_write_reg(board, chip_id, CTRL_REG, disable_test_cmd);
     }
 }
-
 uint8_t board_set_target(board_t *board){
     board_write_reg(board, 0, TARGET_REG, board->chip_array->target);
     return 0;
@@ -230,7 +231,7 @@ uint8_t board_get_fifo(board_t *board, uint8_t chip_id){
     uint8_t ctrl_data[2] = {0x00, 0x00};
     board_read_reg(board, chip_id, CTRL_REG, ctrl_data);
     uint8_t fifo_status = (uint8_t) ((*ctrl_data)&0x07);
-    if (fifo_status < 3)
+    if (fifo_status < 4)
         return 1;
     else
         return 0;

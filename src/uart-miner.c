@@ -644,9 +644,6 @@ static void *uart_miner_thread(void *userdata) {
     memset(&work, 0, sizeof(work));
     board_t *board = malloc(sizeof(board_t));
     board_init_chip_array(board);
-    for (int l = 1; l <= board->chip_nums; ++l) {
-        board_start_self_test(board, l);
-    }
     uint8_t need_regen = 0;
     while (!g_work.targetdiff);
     size_t xnonce2_len = g_work.xnonce2_len;
@@ -672,11 +669,11 @@ static void *uart_miner_thread(void *userdata) {
             board_set_target(board);
         }
 //
-//        if (need_regen) {
-//            stratum_gen_work(&stratum, &g_work);
-//            need_regen = 0;
-//        }
-//    version 4*1B   prev_hash 4*8B   merkle_root 4*8B   ntime 4*1B   nbits 4*1B
+        if (need_regen) {
+            stratum_gen_work(&stratum, &g_work);
+            need_regen = 0;
+        }
+//    verjion 4*1B   prev_hash 4*8B   merkle_root 4*8B   ntime 4*1B   nbits 4*1B
 //		data_in has changed
         if (memcmp(work.data, g_work.data, 76)) {
 //			  job_id has changed, need to clear fifo.

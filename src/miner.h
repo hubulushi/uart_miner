@@ -259,10 +259,11 @@ typedef struct work_id_table{
 
 typedef struct chip_info
 {
+	uint8_t disable;
     uint8_t chip_id[1];
     uint8_t pll[4];
     uint8_t baudrate[2];
-    uint8_t ctrl[1];
+    uint8_t ctrl[2];
     uint8_t data_in[76];
     uint8_t data_out[64];
     uint8_t core_sel[2];
