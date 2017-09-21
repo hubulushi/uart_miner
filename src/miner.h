@@ -215,8 +215,9 @@ void sha256_transform_8way(uint32_t *state, const uint32_t *block, int swap);
 
 struct work;
 
-int scanhash_x11(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
 
+int scanhash_x11(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
+int scanhash_cryptonight(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
 
 typedef enum reg{
     CHIP_ID_REG,            //1				0

@@ -132,6 +132,10 @@ uint8_t board_init_chip_array(board_t *board){
     serial_write(&board->cmd_serial, &data_in, 1);
     serial_read(&board->cmd_serial, buf, 1, -1);
     board->chip_nums = (uint8_t) (*(buf) - 0x80);
+    if (!board->chip_nums) {
+        applog(LOG_ERR, "press the button...");
+        exit(1);
+    }
     applog(LOG_INFO,"miner has %d chips, serial open succeeded", board->chip_nums);
     for (uint8_t i = 0; i < board->chip_nums; ++i) {
 //      i = 0 means broadcast address
@@ -147,6 +151,29 @@ uint8_t board_init_chip_array(board_t *board){
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
     return 0;
 }
+
+
+uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
+    //CTRL_REG:
+    //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
+    //             1      0       0       1       1       0       0       0
+    //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH  RESTART   ERR
+    //             1      0       0       0       0       0       0       0
+    //TODO: RTL bug should be fixed here, can't return to normal.
+    uint8_t test_cmd[2]={0xC8, 0x80};
+    board_write_reg(board, chip_id, CTRL_REG, test_cmd);
+    sleep(1);
+    board_read_reg(board, chip_id, CTRL_REG, test_cmd);
+    if (test_cmd[1]&0x01) {
+        applog(LOG_ERR, "chip %d error", chip_id);
+        uint8_t disable_chip_cmd[2] = {0x80, 0x00};
+        board_write_reg(board, chip_id, CTRL_REG, disable_chip_cmd);
+        } else {
+        uint8_t disable_test_cmd[2] = {0x90, 0x80};
+        board_write_reg(board, chip_id, CTRL_REG, disable_test_cmd);
+    }
+}
+
 uint8_t board_set_target(board_t *board){
     board_write_reg(board, 0, TARGET_REG, board->chip_array->target);
     return 0;
@@ -164,15 +191,15 @@ uint8_t board_reset_x11(board_t *board, uint8_t chip_id){
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
     //             1      0       0       1       0       0       0       0
-    //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH   RESET    ERR
-    //             1      0       0       0       0       1       0       0
+    //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH   RESART   ERR
+    //             1      0       0       0       0       0       0       0
     uint8_t reset_cmd[2] = {0x90, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
 }
 uint8_t board_start_x11(board_t *board, uint8_t chip_id){
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
-    //             1      0       0       1       0       0       0       0
+    //             1      1       0       1       0       0       0       0
     //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH   RESET    ERR
     //             1      0       0       0       0       1       0       0
     uint8_t start_cmd[2] = {0xC0, 0x80};
@@ -261,4 +288,3 @@ uint8_t board_soft_reset_chip(board_t *board, uint8_t chip_id){
     uint8_t reset_cmd[2] = {0x90, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
 }
-

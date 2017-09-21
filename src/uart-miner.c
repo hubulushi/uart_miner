@@ -644,6 +644,9 @@ static void *uart_miner_thread(void *userdata) {
     memset(&work, 0, sizeof(work));
     board_t *board = malloc(sizeof(board_t));
     board_init_chip_array(board);
+    for (int l = 1; l <= board->chip_nums; ++l) {
+        board_start_self_test(board, l);
+    }
     uint8_t need_regen = 0;
     while (!g_work.targetdiff);
     size_t xnonce2_len = g_work.xnonce2_len;
@@ -694,7 +697,6 @@ static void *uart_miner_thread(void *userdata) {
             board_start_x11(board, 0);
         }
         pthread_mutex_unlock(&g_work_lock);
-
 
 //          make sure nonce is not full
         for (uint8_t j = 0; j < board->chip_nums; ++j)
@@ -1192,11 +1194,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (opt_algo == ALGO_TTY && opt_tty == false) {
-        printf("Need to set tty path like \"/dev/usbtty0\"\n");
-        return 1;
-    }
-
     pthread_mutex_init(&stats_lock, NULL);
     pthread_mutex_init(&g_work_lock, NULL);
     pthread_mutex_init(&stratum.sock_lock, NULL);
@@ -1259,7 +1256,7 @@ int main(int argc, char *argv[]) {
     thr->q = tq_new();
     if (!thr->q)
         return 1;
-    if (opt_algo == ALGO_TTY) {
+    if (opt_algo==ALGO_TTY) {
         err = thread_create(thr, uart_miner_thread);
     } else {
         err = thread_create(thr, miner_thread);

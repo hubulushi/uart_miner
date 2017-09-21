@@ -6,6 +6,16 @@ set(CMAKE_C_STANDARD 11)
 set_source_files_properties(asm/sha2-x64.S PROPERTIES COMPILE_FLAGS "-x assembler-with-cpp")
 set_source_files_properties(src/uint256.cpp PROPERTIES COMPILE_FLAGS "-Wno-effc++")
 
+set(crypto_directory
+        crypto/c_blake256.c
+        crypto/c_groestl.c
+        crypto/c_jh.c
+        crypto/c_keccak.c
+        crypto/c_skein.c
+        crypto/hash.c
+        crypto/oaes_lib.c
+)
+
 set(sha3_directory
         asm/sha2-x64.S
         sha3/sph_keccak.c
@@ -37,12 +47,11 @@ set(src_directory
         src/x11.c
         src/serial.c
         src/sysinfos.c
-        src/tty.c
         src/util.c
         src/uint256.cpp
         src/communication.c
         )
 
-set(SOURCE_FILES ${src_directory} ${sha3_directory} )
+set(SOURCE_FILES ${src_directory} ${sha3_directory})
 add_executable(uart_miner ${SOURCE_FILES} src/uart-miner.c)
 target_link_libraries(uart_miner jansson curl ssl pthread)
