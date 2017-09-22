@@ -3,9 +3,7 @@ project(uart_miner C ASM CXX)
 
 set(CMAKE_C_STANDARD 11)
 
-#set_source_files_properties(asm/sha2-x64.S PROPERTIES COMPILE_FLAGS "-x assembler-with-cpp")
 set_source_files_properties(src/uint256.cpp PROPERTIES COMPILE_FLAGS "-Wno-effc++")
-set_source_files_properties(asm/aesb-x64.S PROPERTIES COMPILE_FLAGS "-x assembler-with-cpp")
 set(crypto_directory
         crypto/c_blake256.c
         crypto/c_groestl.c
@@ -15,11 +13,9 @@ set(crypto_directory
         crypto/hash.c
         crypto/oaes_lib.c
         crypto/aesb.c
-        crypto/aesb-x64.S
         )
 
 set(sha3_directory
-        asm/sha2-x64.S
         sha3/sph_keccak.c
         sha3/sph_hefty1.c
         sha3/sph_groestl.c
@@ -37,7 +33,6 @@ set(sha3_directory
         sha3/sph_haval.c
         sha3/sph_fugue.c
         sha3/sph_ripemd.c
-        sha3/sph_sha2.c
         sha3/sph_sha2big.c
         sha3/sph_shabal.c
         sha3/sph_whirlpool.c
