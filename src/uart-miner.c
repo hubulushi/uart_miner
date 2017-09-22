@@ -54,7 +54,6 @@ static const char *algo_names[] = {
         "tty",
         "\0"
 };
-int error_flag = 0;
 bool opt_benchmark = false;
 bool opt_debug = true;
 bool want_stratum = true;
@@ -228,9 +227,6 @@ static bool work_decode(const json_t *val, struct work *work) {
     for (i = 0; i < atarget_sz; i++)
         work->target[i] = le32dec(work->target + i);
 
-    if ((opt_debug || opt_max_diff > 0.) && !allow_mininginfo)
-        calc_network_diff(work);
-
     work->targetdiff = target_to_diff(work->target);
 
     // for api stats, on longpoll pools
@@ -245,10 +241,9 @@ static int share_result(int result, const char *reason) {
     pthread_mutex_lock(&stats_lock);
     result ? accepted_count++ : rejected_count++;
     pthread_mutex_unlock(&stats_lock);
-    applog(LOG_BLUE, "accepted: %lu/%lu", accepted_count, accepted_count + rejected_count);
+    applog(LOG_INFO, "accepted: %lu/%lu", accepted_count, accepted_count + rejected_count);
     if (reason) {
         applog(LOG_WARNING, "reject reason: %s", reason);
-        error_flag = 1;
     }
     return 1;
 }
@@ -279,20 +274,6 @@ static bool submit_upstream_work(CURL *curl, struct work *work) {
     snprintf(s, JSON_BUF_LEN,
              "{\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
              rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
-    if (opt_debug) {
-        uint32_t *pdata = work->data;
-        uint32_t datain[20], hash[8];
-        for (int k = 0; k < 19; k++)
-            be32enc(&datain[k], pdata[k]);
-        be32enc(&datain[19], nonce);
-        x11hash(hash, datain);
-        work_set_target_ratio(work, hash);
-        stratum.sharediff = work->sharediff;
-//        Open here to enable print upload data
-//        applog(LOG_DEBUG,
-//               "submitting data: {\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
-//               rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
-    }
     free(xnonce2str);
 
     // store to keep/display solved blocks (work struct not linked on accept notification)
@@ -490,15 +471,11 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work) {
     work->data[20] = 0x80000000;
     work->data[31] = 0x00000280;
 
-    if (opt_debug || opt_max_diff > 0.)
-        calc_network_diff(work);
-
     pthread_mutex_unlock(&sctx->work_lock);
 
     if (opt_debug) {
         char *xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
-        applog(LOG_DEBUG, "DEBUG: job_id='%s' extranonce2=%s ntime=%08x", work->job_id, xnonce2str,
-               swab32(work->data[17]));
+        applog(LOG_DEBUG, "generating new xnonce2: job_id='%s' extranonce2=%s ntime=%08x", work->job_id, xnonce2str, swab32(work->data[17]));
         free(xnonce2str);
     }
 
@@ -509,7 +486,6 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work) {
         stratum_diff = sctx->job.diff;
         if (opt_debug && work->targetdiff != stratum_diff)
             snprintf(sdiff, 32, " (%.5f)", work->targetdiff);
-        applog(LOG_WARNING, "Stratum difficulty set to %g%s", stratum_diff, sdiff);
     }
 }
 
@@ -649,17 +625,10 @@ static void *uart_miner_thread(void *userdata) {
     size_t xnonce2_len = g_work.xnonce2_len;
     uint8_t *work_id = malloc(8 * xnonce2_len);
     memset(work_id, 0x00, 8 * xnonce2_len);
-    int work_id_index = 2;
+//    TODO:work id still have some bugs in RTL
+    int work_id_index = 0;
     while (1) {
         pthread_mutex_lock(&g_work_lock);
-        if (error_flag) {
-            for (uint8_t i = 0; i < board->chip_nums; ++i) {
-                board_debug_chips(board, i, WORK_ID_REG);
-                board_debug_chips(board, i, CTRL_REG);
-                board_debug_chips(board, i, DATA_IN_REG);
-            }
-            error_flag = 0;
-        }
         if (work.targetdiff != g_work.targetdiff) {
 //        g_work diff has changed.
             work.targetdiff = g_work.targetdiff;
@@ -677,8 +646,10 @@ static void *uart_miner_thread(void *userdata) {
 //		data_in has changed
         if (memcmp(work.data, g_work.data, 76)) {
 //			  job_id has changed, need to clear fifo.
-            if (work.job_id != g_work.job_id)
+            if (work.job_id==NULL||strcmp(work.job_id,g_work.job_id)){
                 board_flush_fifo(board, 0);
+                applog(LOG_DEBUG, "job id: %s came, flushed FIFO", g_work.job_id);
+            }
 //            copy work from g_work to work
             work_free(&work);
             work_copy(&work, &g_work);
@@ -696,9 +667,8 @@ static void *uart_miner_thread(void *userdata) {
         pthread_mutex_unlock(&g_work_lock);
 
 //          make sure nonce is not full
-        for (uint8_t j = 0; j < board->chip_nums; ++j)
-            if (need_regen || board_get_fifo(board, j))
-                need_regen = 1;
+        for (uint8_t j = 1; j <= board->chip_nums; ++j)
+            need_regen = (uint8_t)(need_regen || board_get_fifo(board, j));
 
         if (board_wait_for_nonce(board)) {
             work_free(&upload_work);
@@ -707,19 +677,6 @@ static void *uart_miner_thread(void *userdata) {
             memcpy(upload_work.xnonce2, work_id + (*board->work_id * xnonce2_len), xnonce2_len);
             if (!submit_work(mythr, &upload_work)) {
                 break;
-            }
-            if (opt_debug) {
-                uint32_t *pdata = upload_work.data;
-                uint32_t datain[20], hash[8];
-                for (int k = 0; k < 20; k++)
-                    be32enc(&datain[k], pdata[k]);
-                x11hash(hash, datain);
-                work_set_target_ratio(&upload_work, hash);
-                char *datain_str = abin2hex((uchar *) datain, 80);
-                char *hash_str = abin2hex((uchar *) hash, 32);
-                applog(LOG_DEBUG, "data_in: %s", datain_str);
-                applog(LOG_DEBUG, "hash_out: %s", hash_str);
-                applog(LOG_DEBUG, "share diff: %.8f", upload_work.sharediff);
             }
         }
     }
@@ -730,7 +687,6 @@ static bool stratum_handle_response(char *buf) {
     json_error_t err;
     bool ret = false;
     bool valid;
-
     val = JSON_LOADS(buf, &err);
     if (!val) {
         applog(LOG_INFO, "JSON decode failed(%d): %s", err.line, err.text);
@@ -802,15 +758,15 @@ static void *stratum_thread(void *userdata) {
                 if (!opt_quiet && last_bloc_height != stratum.bloc_height) {
                     last_bloc_height = stratum.bloc_height;
                     if (net_diff > 0.)
-                        applog(LOG_BLUE, "%s block %d, diff %.3f", algo_names[opt_algo],
+                        applog(LOG_INFO, "%s block %d, diff %.3f", algo_names[opt_algo],
                                stratum.bloc_height, net_diff);
                     else
-                        applog(LOG_BLUE, "%s %s block %d", short_url, algo_names[opt_algo],
+                        applog(LOG_INFO, "%s %s block %d", short_url, algo_names[opt_algo],
                                stratum.bloc_height);
                 }
 //				restart_threads();
             } else if (opt_debug && !opt_quiet) {
-                applog(LOG_BLUE, "%s asks job %lu for block %d", short_url,
+                applog(LOG_INFO, "%s asks job %lu for block %d", short_url,
                        strtoul(stratum.job.job_id, NULL, 16), stratum.bloc_height);
             }
         }

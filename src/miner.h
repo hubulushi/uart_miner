@@ -78,6 +78,7 @@ enum {
 	LOG_INFO,
 	LOG_DEBUG,
 	LOG_SERIAL,
+    LOG_STRATUM,
 	/* custom notices */
 	LOG_BLUE = 0x10,
 

@@ -83,25 +83,25 @@
 /* #undef NO_MINUS_C_MINUS_O */
 
 /* Name of package */
-#define PACKAGE "cpuminer-multi"
+#define PACKAGE "uart_miner"
 
 /* Define to the address where bug reports for this package should be sent. */
 #define PACKAGE_BUGREPORT ""
 
 /* Define to the full name of this package. */
-#define PACKAGE_NAME "cpuminer-multi"
+#define PACKAGE_NAME "uart_miner"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "cpuminer-multi 1.3.2"
+#define PACKAGE_STRING "uart_miner v0.1"
 
 /* Define to the one symbol short name of this package. */
-#define PACKAGE_TARNAME "cpuminer-multi"
+#define PACKAGE_TARNAME "uart_miner"
 
 /* Define to the home page for this package. */
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "1.3.3"
+#define PACKAGE_VERSION "v0.1"
 
 /* If using the C implementation of alloca, define if you know the
    direction of stack growth for your system; otherwise it will be
@@ -115,7 +115,7 @@
 #define STDC_HEADERS 1
 
 /* Define to 1 if assembly routines are wanted. */
-#define USE_ASM 1
+#define USE_ASM 0
 
 /* Define to 1 if AVX assembly is available. */
 #define USE_AVX 1

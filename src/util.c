@@ -74,85 +74,57 @@ void applog(int prio, const char *fmt, ...) {
     va_list ap;
 
     va_start(ap, fmt);
+    const char *color = "";
+    char *f;
+    int len;
+    struct tm tm;
+    time_t now = time(NULL);
 
-#ifdef HAVE_SYSLOG_H
-    if (use_syslog) {
-        va_list ap2;
-        char *buf;
-        int len;
+    localtime_r(&now, &tm);
 
-        /* custom colors to syslog prio */
-        if (prio > LOG_DEBUG) {
-            switch (prio) {
-                case LOG_BLUE: prio = LOG_NOTICE; break;
-            }
-        }
-
-        va_copy(ap2, ap);
-        len = vsnprintf(NULL, 0, fmt, ap2) + 1;
-        va_end(ap2);
-        buf = alloca(len);
-        if (vsnprintf(buf, len, fmt, ap) >= 0)
-            syslog(prio, "%s", buf);
-    }
-#else
-    if (0) {}
-#endif
-    else {
-        const char *color = "";
-        char *f;
-        int len;
-        struct tm tm;
-        time_t now = time(NULL);
-
-        localtime_r(&now, &tm);
-
-        switch (prio) {
-            case LOG_ERR:
-                color = CL_RED;
-                break;
-            case LOG_WARNING:
-                color = CL_YLW;
-                break;
-            case LOG_NOTICE:
-                color = CL_WHT;
-                break;
-            case LOG_INFO:
-                color = "";
-                break;
-            case LOG_DEBUG:
-                color = CL_WHT;
-                break;
-            case LOG_SERIAL:
-                color = CL_MAG;
-                break;
-            case LOG_BLUE:
-                prio = LOG_NOTICE;
-                color = CL_CYN;
-                break;
-        }
-        if (!use_colors)
+    switch (prio) {
+        case LOG_ERR:
+            color = CL_RED;
+            break;
+        case LOG_WARNING:
+            color = CL_YLW;
+            break;
+        case LOG_NOTICE:
+            color = CL_WHT;
+            break;
+        case LOG_INFO:
             color = "";
-
-        len = 64 + (int) strlen(fmt) + 2;
-        f = (char *) malloc(len);
-        sprintf(f, "[%d-%02d-%02d %02d:%02d:%02d]%s %s%s\n",
-                tm.tm_year + 1900,
-                tm.tm_mon + 1,
-                tm.tm_mday,
-                tm.tm_hour,
-                tm.tm_min,
-                tm.tm_sec,
-                color,
-                fmt,
-                use_colors ? CL_N : ""
-        );
-        pthread_mutex_lock(&applog_lock);
-        vfprintf(stdout, f, ap);    /* atomic write to stdout */
-        fflush(stdout);
-        free(f);
-        pthread_mutex_unlock(&applog_lock);
+            break;
+        case LOG_DEBUG:
+            color = CL_WHT;
+            break;
+        case LOG_SERIAL:
+            color = CL_MAG;
+            break;
+        case LOG_STRATUM:
+            color = CL_BLU;
     }
+    if (!use_colors)
+        color = "";
+
+    len = 64 + (int) strlen(fmt) + 2;
+    f = (char *) malloc(len);
+    sprintf(f, "[%d-%02d-%02d %02d:%02d:%02d]%s %s%s\n",
+            tm.tm_year + 1900,
+            tm.tm_mon + 1,
+            tm.tm_mday,
+            tm.tm_hour,
+            tm.tm_min,
+            tm.tm_sec,
+            color,
+            fmt,
+            use_colors ? CL_N : ""
+    );
+    pthread_mutex_lock(&applog_lock);
+    vfprintf(stdout, f, ap);    /* atomic write to stdout */
+    fflush(stdout);
+    free(f);
+    pthread_mutex_unlock(&applog_lock);
     va_end(ap);
 }
 
@@ -479,9 +451,6 @@ json_t *json_rpc_call(CURL *curl, const char *url,
 #endif
     curl_easy_setopt(curl, CURLOPT_POST, 1);
 
-    if (opt_protocol)
-        applog(LOG_DEBUG, "JSON protocol request:\n%s\n", rpc_req);
-
     upload_data.buf = rpc_req;
     upload_data.len = strlen(rpc_req);
     upload_data.pos = 0;
@@ -530,9 +499,9 @@ json_t *json_rpc_call(CURL *curl, const char *url,
         goto err_out;
     }
 
-    if (opt_protocol) {
+    if (opt_debug) {
         char *s = json_dumps(val, JSON_INDENT(3));
-        applog(LOG_DEBUG, "JSON protocol response:\n%s", s);
+        applog(LOG_DEBUG, "JSON: %s", s);
         free(s);
     }
 
@@ -985,9 +954,7 @@ static bool send_line(curl_socket_t sock, char *s) {
 
 bool stratum_send_line(struct stratum_ctx *sctx, char *s) {
     bool ret = false;
-
-    if (opt_protocol)
-        applog(LOG_DEBUG, "> %s", s);
+    applog(LOG_STRATUM, "[STRATUM_SEND] %s", s);
 
     pthread_mutex_lock(&sctx->sock_lock);
     ret = send_line(sctx->sock, s);
@@ -1065,9 +1032,9 @@ char *stratum_recv_line(struct stratum_ctx *sctx) {
             goto out;
         }
     }
-
     buflen = (ssize_t) strlen(sctx->sockbuf);
     tok = strtok(sctx->sockbuf, "\n");
+    applog(LOG_STRATUM, "[STRATUM_RECV] %s", sctx->sockbuf);
     if (!tok) {
         applog(LOG_ERR, "stratum_recv_line failed to parse a newline-terminated string");
         goto out;
@@ -1075,14 +1042,12 @@ char *stratum_recv_line(struct stratum_ctx *sctx) {
     sret = strdup(tok);
     len = (ssize_t) strlen(sret);
 
-    if (buflen > len + 1)
+    if (buflen > len + 1) {
         memmove(sctx->sockbuf, sctx->sockbuf + len + 1, buflen - len + 1);
-    else
+    } else
         sctx->sockbuf[0] = '\0';
 
     out:
-    if (sret && opt_protocol)
-        applog(LOG_DEBUG, "< %s", sret);
     return sret;
 }
 
@@ -1293,8 +1258,6 @@ bool stratum_subscribe(struct stratum_ctx *sctx) {
     }
 
     sid = get_stratum_session_id(res_val);
-    if (opt_debug && sid)
-        applog(LOG_DEBUG, "Stratum session id: %s", sid);
 
     pthread_mutex_lock(&sctx->work_lock);
     if (sctx->session_id)
@@ -1335,8 +1298,7 @@ bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *p
     int req_id = 0;
 
     s = (char *) malloc(80 + strlen(user) + strlen(pass));
-    sprintf(s, "{\"id\": 2, \"method\": \"mining.authorize\", \"params\": [\"%s\", \"%s\"]}",
-            user, pass);
+    sprintf(s, "{\"id\": 2, \"method\": \"mining.authorize\", \"params\": [\"%s\", \"%s\"]}", user, pass);
 
     if (!stratum_send_line(sctx, s))
         goto out;
@@ -1369,12 +1331,8 @@ bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *p
 
     ret = true;
 
-//	if (!opt_extranonce)
-//		goto out;
-
     // subscribe to extranonce (optional)
     sprintf(s, "{\"id\": 3, \"method\": \"mining.extranonce.subscribe\", \"params\": []}");
-
     if (!stratum_send_line(sctx, s))
         goto out;
 

@@ -7,7 +7,6 @@ uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
     if (board->current_chip == chip_id)
         return 0;
     board->current_chip = chip_id;
-    applog(LOG_SERIAL, "choosing chip %d", chip_id);
     uint8_t buf = 0xFF;
     uint8_t data_in = 0x00;
     data_in += chip_id;
@@ -37,7 +36,6 @@ uint8_t board_open_serials(board_t *board, char* cmd_serial_path, uint32_t cmd_s
         serial_close(&board->nonce_serial);
         exit(1);
     }
-    applog(LOG_SERIAL,"serial opened");
     return 0;
 }
 uint8_t board_write_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t* src){
@@ -64,11 +62,7 @@ uint8_t board_write_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t
         serial_close(&board->nonce_serial);
         exit(1);
     } else {
-        if (!chip_id)
-            applog(LOG_SERIAL, "wrote to all chip's reg %d: %s", reg_type, hex);
-        else {
-            applog(LOG_SERIAL, "wrote to reg %d in chip %d: %s", reg_type, chip_id, hex);
-        }
+        applog(LOG_SERIAL, "[SERIAL_WRITE] chip %d reg %d: %s", chip_id, reg_type, hex);
     }
     return 0;
 }
@@ -87,7 +81,7 @@ uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t*
     //read by_pass data(command) and reg data from chip
     serial_read(&board->cmd_serial, temp_buf, 1+len, -1);
     char* hex = abin2hex((uchar*)temp_buf, 1+len);
-    applog(LOG_SERIAL, "reading from reg %d in chip %d: %s", reg_type, chip_id, hex);
+    applog(LOG_SERIAL, "[SERIAL_READ ] chip %d reg %d: %s", chip_id, reg_type, hex);
     if (*temp_buf!=data_in) {
         applog(LOG_ERR, "board_read_reg : %02x->%02x", data_in, *temp_buf);
         serial_close(&board->cmd_serial);
@@ -112,7 +106,8 @@ uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t*
     return 0;
 }
 uint8_t board_assign_nonce(board_t *board){
-    uint32_t nonce_step = 0xffffffffU / board->chip_nums;
+//    uint32_t nonce_step = 0xffffffffU / board->chip_nums;
+    uint32_t nonce_step = 0x00100000U;
     uint32_t nonce = 0x00000000U;
     for (uint8_t i = 1; i <= board->chip_nums; ++i) {
         le32enc(&board->chip_array[i].start_nonce,nonce);
@@ -144,7 +139,7 @@ uint8_t board_init_chip_array(board_t *board){
 //    make sure next choose can choose all chip
     board->current_chip = 0xFF;
     board_reset_x11(board,0);
-    uint8_t cycle_reg[1] = {0xFA};
+    uint8_t cycle_reg[1] = {0x4E};
     board_write_reg(board, 0, CYCLES_REG, cycle_reg);
     board_assign_nonce(board);
     uint8_t core_sel[2] = {0x01, 0x00};
@@ -216,8 +211,7 @@ uint8_t board_wait_for_nonce(board_t *board){
         char* nonce_data_str = abin2hex(nonce_data,7);
         char* nonce_hex = abin2hex(board->nonce, 4);
         char* work_id_hex = abin2hex(board->work_id, 1);
-        applog(LOG_SERIAL, "receive data: %s", nonce_data_str);
-        applog(LOG_SERIAL, "nonce: %s, work_id: %s", nonce_hex, work_id_hex);
+        applog(LOG_SERIAL, "receive data: %s, nonce: %s, work_id: %s",nonce_data_str, nonce_hex, work_id_hex);
         return 1;
     }
     return 0;
@@ -230,12 +224,12 @@ uint8_t board_get_fifo(board_t *board, uint8_t chip_id){
     //             1      0       0       0       0       1       0       0
     uint8_t ctrl_data[2] = {0x00, 0x00};
     board_read_reg(board, chip_id, CTRL_REG, ctrl_data);
-    uint8_t fifo_status = (uint8_t) ((*ctrl_data)&0x07);
-    if (fifo_status < 4)
+    uint8_t fifo_status = (uint8_t) (ctrl_data[0]&0x07);
+    applog(LOG_DEBUG, "chip %d fifo has %d data", chip_id, fifo_status);
+    if (fifo_status < 3)
         return 1;
     else
         return 0;
-
 }
 uint8_t board_display_rate(board_t *board){
     uint8_t hash_rate[4] = {0};
@@ -268,16 +262,6 @@ uint8_t board_flush_fifo(board_t *board, uint8_t chip_id){
     uint8_t reset_cmd[2] = {0x80, 0x84};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
     return 0;
-}
-uint8_t board_debug_chips(board_t *board, uint8_t chip_id, reg_t reg_type){
-    uint8_t buf[reg_size[reg_type]];
-    usleep(1000);
-    board_read_reg(board, chip_id, reg_type, buf);
-    printf("[DEBUG]\t[REG]\t[chip_debug_print_state]:\tdata read from chip %d at reg %d is: ",chip_id, reg_type);
-    for (int j = 0; j < reg_size[reg_type]; ++j) {
-        printf("%02x", buf[j]);
-    }
-    printf("\n");
 }
 uint8_t board_soft_reset_chip(board_t *board, uint8_t chip_id){
     //    read firstly, use "and" to START bit to combine.
