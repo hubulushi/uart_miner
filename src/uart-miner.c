@@ -73,6 +73,7 @@ int opt_timeout = 300;
 static enum algos opt_algo = ALGO_X11;
 int opt_priority = 0;
 int num_cpus;
+
 char *rpc_url;
 char *rpc_userpass;
 char *rpc_user, *rpc_pass;
@@ -87,7 +88,7 @@ struct stratum_ctx stratum;
 double opt_diff_factor = 1.0;
 pthread_mutex_t applog_lock;
 pthread_mutex_t stats_lock;
-
+uint8_t need_restart = 0;
 uint32_t accepted_count = 0L;
 uint32_t rejected_count = 0L;
 double *thr_hashrates;
@@ -612,6 +613,9 @@ static void *miner_thread(void *userdata) {
 
 
 static void *uart_miner_thread(void *userdata) {
+    start_miner:
+    while (!g_work.targetdiff);
+    need_restart = 0;
     struct thr_info *mythr = (struct thr_info *) userdata;
     struct work zero_work;
     work_free(&zero_work);
@@ -621,11 +625,9 @@ static void *uart_miner_thread(void *userdata) {
     board_t *board = malloc(sizeof(board_t));
     board_init_chip_array(board);
     uint8_t need_regen = 0;
-    while (!g_work.targetdiff);
     size_t xnonce2_len = g_work.xnonce2_len;
-    uint8_t *work_id = malloc(8 * xnonce2_len);
-    memset(work_id, 0x00, 8 * xnonce2_len);
-//    TODO:work id still have some bugs in RTL
+    uint8_t *work_id = malloc(16 * xnonce2_len);
+    memset(work_id, 0x00, 16 * xnonce2_len);
     int work_id_index = 0;
     while (1) {
         pthread_mutex_lock(&g_work_lock);
@@ -660,7 +662,9 @@ static void *uart_miner_thread(void *userdata) {
 //            WORK_ID_REG
             memcpy(work_id + (work_id_index * xnonce2_len), work.xnonce2, xnonce2_len);
             memcpy(board->chip_array[0].work_id, &work_id_index, 1);
-            work_id_index = (work_id_index + 1) % 8;
+            char* xnonce2str = abin2hex(work.xnonce2, xnonce2_len);
+            applog(LOG_DEBUG, "work_id_index: %d, xnonce2: %s",work_id_index, xnonce2str);
+            work_id_index = (work_id_index + 1) % 16;
             board_set_workid(board, 0);
             board_start_x11(board, 0);
         }
@@ -679,6 +683,8 @@ static void *uart_miner_thread(void *userdata) {
                 break;
             }
         }
+        if (unlikely(need_restart))
+            goto start_miner;
     }
 }
 
@@ -744,7 +750,6 @@ static void *stratum_thread(void *userdata) {
                     applog(LOG_ERR, "...retry after %d seconds", opt_fail_pause);
                 sleep(opt_fail_pause);
             }
-
         }
 
         if (stratum.job.job_id && (!g_work_time || strcmp(stratum.job.job_id, g_work.job_id))) {
@@ -764,7 +769,7 @@ static void *stratum_thread(void *userdata) {
                         applog(LOG_INFO, "%s %s block %d", short_url, algo_names[opt_algo],
                                stratum.bloc_height);
                 }
-//				restart_threads();
+                need_restart = 1;
             } else if (opt_debug && !opt_quiet) {
                 applog(LOG_INFO, "%s asks job %lu for block %d", short_url,
                        strtoul(stratum.job.job_id, NULL, 16), stratum.bloc_height);
@@ -1209,6 +1214,7 @@ int main(int argc, char *argv[]) {
     thr->q = tq_new();
     if (!thr->q)
         return 1;
+
     if (opt_algo==ALGO_TTY) {
         err = thread_create(thr, uart_miner_thread);
     } else {
@@ -1219,6 +1225,7 @@ int main(int argc, char *argv[]) {
         applog(LOG_ERR, "thread %d create failed", 0);
         return 1;
     }
+
     /* main loop - simply wait for workio thread to exit */
     pthread_join(thr_info[1].pth, NULL);
     applog(LOG_WARNING, "workio thread dead, exiting.");

@@ -828,35 +828,10 @@ OAES_CTX * oaes_alloc(void)
 	if( NULL == _ctx )
 		return NULL;
 
-#ifdef OAES_HAVE_ISAAC
-	{
-	  ub4 _i = 0;
-		char _seed[RANDSIZ + 1];
-		
-		_ctx->rctx = (randctx *) calloc( sizeof( randctx ), 1 );
-
-		if( NULL == _ctx->rctx )
-		{
-			free( _ctx );
-			return NULL;
-		}
-
-		oaes_get_seed( _seed );
-		memset( _ctx->rctx->randrsl, 0, RANDSIZ );
-		memcpy( _ctx->rctx->randrsl, _seed, RANDSIZ );
-		randinit( _ctx->rctx, TRUE);
-	}
-#else
-		srand( oaes_get_seed() );
-#endif // OAES_HAVE_ISAAC
+	srand( oaes_get_seed() );
 
 	_ctx->key = NULL;
 	oaes_set_option( _ctx, OAES_OPTION_CBC, NULL );
-
-#ifdef OAES_DEBUG
-	_ctx->step_cb = NULL;
-	oaes_set_option( _ctx, OAES_OPTION_STEP_OFF, NULL );
-#endif // OAES_DEBUG
 
 	return (OAES_CTX *) _ctx;
 }
@@ -911,44 +886,13 @@ OAES_RET oaes_set_option( OAES_CTX * ctx,
 			else
 			{
 				for( _i = 0; _i < OAES_BLOCK_SIZE; _i++ )
-#ifdef OAES_HAVE_ISAAC
-					_ctx->iv[_i] = (uint8_t) rand( _ctx->rctx );
-#else
 					_ctx->iv[_i] = (uint8_t) rand();
-#endif // OAES_HAVE_ISAAC
 			}
 			break;
-
-#ifdef OAES_DEBUG
-
-		case OAES_OPTION_STEP_ON:
-			if( value )
-			{
-				_ctx->options &= ~OAES_OPTION_STEP_OFF;
-				_ctx->step_cb = value;
-			}
-			else
-			{
-				_ctx->options &= ~OAES_OPTION_STEP_ON;
-				_ctx->options |= OAES_OPTION_STEP_OFF;
-				_ctx->step_cb = NULL;
-				return OAES_RET_ARG3;
-			}
-			break;
-
-		case OAES_OPTION_STEP_OFF:
-			_ctx->options &= ~OAES_OPTION_STEP_ON;
-			_ctx->step_cb = NULL;
-			break;
-
-#endif // OAES_DEBUG
-
 		default:
 			return OAES_RET_ARG2;
 	}
-
 	_ctx->options |= option;
-
 	return OAES_RET_SUCCESS;
 }
 

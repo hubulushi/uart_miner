@@ -22,30 +22,9 @@ uint8_t board_choose_chip(board_t *board, uint8_t chip_id);
 uint8_t board_get_fifo(board_t *board, uint8_t chip_id);
 uint8_t board_display_rate(board_t *board);
 uint8_t board_display_counter(board_t *board);
-uint8_t board_clear_fifo(board_t *board, uint8_t chip_id);
 uint8_t board_soft_reset_chip(board_t *board, uint8_t chip_id);
 uint8_t board_start_self_test(board_t *board, uint8_t chip_id);
 uint8_t board_flush_fifo(board_t *board, uint8_t chip_id);
-
-
-
-
-
-
-
-
-
-
-
 uint8_t board_debug_chips(board_t *board, uint8_t chip_id, reg_t reg_type);
-
-
-
-
-
-
-uint8_t work_id_table_push(uint8_t* work_id_table, uint8_t* xnonce2, size_t xnonce2_len);
-uint8_t work_id_table_find(uint8_t* work_id_table, uint8_t work_id, uint8_t* dst_xnonce2, size_t xnonce2_len);
-
-
+uint8_t board_hard_reset(board_t *board);
 #endif

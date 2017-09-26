@@ -203,13 +203,12 @@ int scanhash_cryptonight(int thr_id, struct work *work, uint32_t max_nonce, uint
 	uint32_t _ALIGN(128) hash[HASH_SIZE / 4];
 	uint32_t *pdata = work->data;
 	uint32_t *ptarget = work->target;
-
+//  uint8_t pdata[40:43] is the nonce we can change.
 	uint32_t *nonceptr = (uint32_t*) (((char*)pdata) + 39);
 	uint32_t n = *nonceptr - 1;
 	const uint32_t first_nonce = n + 1;
 
 	struct cryptonight_ctx *ctx = (struct cryptonight_ctx*)malloc(sizeof(struct cryptonight_ctx));
-
 
 	do {
 		*nonceptr = ++n;

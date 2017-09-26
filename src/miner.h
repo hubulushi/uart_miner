@@ -402,7 +402,6 @@ extern double net_hashrate;
 #define CL_WHT  "\x1B[01;37m" /* white */
 
 void applog(int prio, const char *fmt, ...);
-void restart_threads(void);
 extern json_t *json_rpc_call(CURL *curl, const char *url, const char *userpass,
 	const char *rpc_req, int *curl_err, int flags);
 void bin2hex(char *s, const unsigned char *p, size_t len);

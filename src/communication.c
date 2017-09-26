@@ -6,6 +6,7 @@ uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
     // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
     if (board->current_chip == chip_id)
         return 0;
+    applog(LOG_SERIAL, "[SERIAL_CHOSE] chip set to %d", chip_id);
     board->current_chip = chip_id;
     uint8_t buf = 0xFF;
     uint8_t data_in = 0x00;
@@ -80,7 +81,7 @@ uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t*
     serial_write(&board->cmd_serial, &data_in, 1);
     //read by_pass data(command) and reg data from chip
     serial_read(&board->cmd_serial, temp_buf, 1+len, -1);
-    char* hex = abin2hex((uchar*)temp_buf, 1+len);
+    char* hex = abin2hex(temp_buf, 1+len);
     applog(LOG_SERIAL, "[SERIAL_READ ] chip %d reg %d: %s", chip_id, reg_type, hex);
     if (*temp_buf!=data_in) {
         applog(LOG_ERR, "board_read_reg : %02x->%02x", data_in, *temp_buf);
@@ -107,7 +108,7 @@ uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t*
 }
 uint8_t board_assign_nonce(board_t *board){
 //    uint32_t nonce_step = 0xffffffffU / board->chip_nums;
-    uint32_t nonce_step = 0x00100000U;
+    uint32_t nonce_step = 0x00400000U;
     uint32_t nonce = 0x00000000U;
     for (uint8_t i = 1; i <= board->chip_nums; ++i) {
         le32enc(&board->chip_array[i].start_nonce,nonce);
@@ -124,6 +125,7 @@ uint8_t board_init_chip_array(board_t *board){
     uint8_t data_in = 0x80;
     uint8_t* buf = malloc(1);
     serial_set_parity(&board->cmd_serial, PARITY_MARK);
+    board_hard_reset(board);
     serial_write(&board->cmd_serial, &data_in, 1);
     serial_read(&board->cmd_serial, buf, 1, -1);
     board->chip_nums = (uint8_t) (*(buf) - 0x80);
@@ -144,7 +146,7 @@ uint8_t board_init_chip_array(board_t *board){
     board_assign_nonce(board);
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
-    for (int j = 0; j < board->chip_nums; ++j) {
+    for (int j = 1; j <= board->chip_nums; ++j) {
         board_start_self_test(board, j);
     }
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
@@ -203,15 +205,20 @@ uint8_t board_start_x11(board_t *board, uint8_t chip_id){
 }
 uint8_t board_wait_for_nonce(board_t *board){
     uint8_t nonce_data[7];
-    uint32_t nonce=0x00;
+    uint32_t nonce;
+    uint8_t check_sum=0x00;
     if(serial_read(&board->nonce_serial, nonce_data, 7, 2000)>0){
+        for (int i = 1; i < 7; ++i)
+            check_sum^=nonce_data[i];
+        if (check_sum != nonce_data[0])
+            applog(LOG_WARNING, "[SERIAL_NONCE] check sum not match.");
         memcpy(board->work_id, nonce_data, 1);
         nonce = le32dec(nonce_data+2);
         memcpy(board->nonce, &nonce, 4);
         char* nonce_data_str = abin2hex(nonce_data,7);
         char* nonce_hex = abin2hex(board->nonce, 4);
         char* work_id_hex = abin2hex(board->work_id, 1);
-        applog(LOG_SERIAL, "receive data: %s, nonce: %s, work_id: %s",nonce_data_str, nonce_hex, work_id_hex);
+        applog(LOG_SERIAL, "[SERIAL_NONCE] data: %s, nonce: %s, work_id: %s",nonce_data_str, nonce_hex, work_id_hex);
         return 1;
     }
     return 0;
@@ -272,4 +279,8 @@ uint8_t board_soft_reset_chip(board_t *board, uint8_t chip_id){
     //             1      0       0       0       0       1       0       0
     uint8_t reset_cmd[2] = {0x90, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
+}
+uint8_t board_hard_reset(board_t *board){
+    //TODO: need to add GPIO to reset whole board.
+    return 0;
 }
