@@ -620,6 +620,8 @@ static void *uart_miner_thread(void *userdata) {
     work_free(&zero_work);
     struct work work;
     struct work upload_work;
+    char* session_id = malloc(strlen(stratum.session_id));
+    strcpy(session_id, stratum.session_id);
     memset(&work, 0, sizeof(work));
     board_t *board = malloc(sizeof(board_t));
     board_init_chip_array(board);
@@ -647,8 +649,9 @@ static void *uart_miner_thread(void *userdata) {
 //		data_in has changed
         if (memcmp(work.data, g_work.data, 76)) {
 //			  job_id has changed, need to clear fifo.
-            if (work.job_id==NULL||strcmp(work.job_id,g_work.job_id)){
+            if (work.job_id==NULL||strcmp(work.job_id,g_work.job_id)||strcmp(session_id, stratum.session_id)){
                 board_flush_fifo(board, 0);
+                strcpy(session_id, stratum.session_id); 
                 applog(LOG_DEBUG, "job id: %s came, flushed FIFO", g_work.job_id);
             }
 //            copy work from g_work to work
