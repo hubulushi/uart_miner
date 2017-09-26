@@ -1,7 +1,7 @@
 #include "miner.h"
 
 uint8_t reg_size[24]= {1, 4, 2, 2, 76, 64, 2, 4, 4, 1, 1, 8, 4, 32, 32, 4, 4, 1, 6, 4, 4, 4, 2, 64};
-
+extern long nonce_cnt;
 uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
     // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
     if (board->current_chip == chip_id)
@@ -207,7 +207,7 @@ uint8_t board_wait_for_nonce(board_t *board){
     uint8_t nonce_data[7];
     uint32_t nonce;
     uint8_t check_sum=0x00;
-    if(serial_read(&board->nonce_serial, nonce_data, 7, 2000)>0){
+    if(serial_read(&board->nonce_serial, nonce_data, 7, 1000)>0){
         for (int i = 1; i < 7; ++i)
             check_sum^=nonce_data[i];
         if (check_sum != nonce_data[0])
@@ -218,7 +218,7 @@ uint8_t board_wait_for_nonce(board_t *board){
         char* nonce_data_str = abin2hex(nonce_data,7);
         char* nonce_hex = abin2hex(board->nonce, 4);
         char* work_id_hex = abin2hex(board->work_id, 1);
-        applog(LOG_SERIAL, "[SERIAL_NONCE] data: %s, nonce: %s, work_id: %s",nonce_data_str, nonce_hex, work_id_hex);
+        applog(LOG_SERIAL, "[SERIAL_NONCE] nonce_cnt: %d, data: %s, nonce: %s, work_id: %s", nonce_cnt, nonce_data_str, nonce_hex, work_id_hex);
         return 1;
     }
     return 0;

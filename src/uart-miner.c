@@ -73,7 +73,7 @@ int opt_timeout = 300;
 static enum algos opt_algo = ALGO_X11;
 int opt_priority = 0;
 int num_cpus;
-
+long nonce_cnt=1;
 char *rpc_url;
 char *rpc_userpass;
 char *rpc_user, *rpc_pass;
@@ -341,7 +341,6 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl) {
         /* pause, then restart work-request loop */
         applog(LOG_ERR, "json_rpc_call failed, retry after %d seconds", opt_fail_pause);
         sleep(opt_fail_pause);
-        need_restart = 1;
     }
 
     /* send work to requesting thread */
@@ -675,6 +674,7 @@ static void *uart_miner_thread(void *userdata) {
             need_regen = (uint8_t)(need_regen || board_get_fifo(board, j));
 
         if (board_wait_for_nonce(board)) {
+            nonce_cnt++;
             work_free(&upload_work);
             work_copy(&upload_work, &work);
             memcpy(upload_work.data + 19, board->nonce, 4);
