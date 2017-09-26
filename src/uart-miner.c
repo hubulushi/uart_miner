@@ -339,9 +339,9 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl) {
         }
 
         /* pause, then restart work-request loop */
-        applog(LOG_ERR, "json_rpc_call failed, retry after %d seconds",
-               opt_fail_pause);
+        applog(LOG_ERR, "json_rpc_call failed, retry after %d seconds", opt_fail_pause);
         sleep(opt_fail_pause);
+        need_restart = 1;
     }
 
     /* send work to requesting thread */
@@ -769,7 +769,6 @@ static void *stratum_thread(void *userdata) {
                         applog(LOG_INFO, "%s %s block %d", short_url, algo_names[opt_algo],
                                stratum.bloc_height);
                 }
-                need_restart = 1;
             } else if (opt_debug && !opt_quiet) {
                 applog(LOG_INFO, "%s asks job %lu for block %d", short_url,
                        strtoul(stratum.job.job_id, NULL, 16), stratum.bloc_height);
