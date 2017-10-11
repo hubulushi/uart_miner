@@ -66,7 +66,7 @@ long opt_proxy_type;
 bool opt_redirect = true;
 bool opt_stratum_stats = false;
 static int opt_retries = -1;
-static int opt_fail_pause = 10;
+static unsigned int opt_fail_pause = 10;
 static int opt_time_limit = 0;
 int opt_timeout = 300;
 static enum algos opt_algo = ALGO_X11;
@@ -86,6 +86,8 @@ struct stratum_ctx stratum;
 double opt_diff_factor = 1.0;
 pthread_mutex_t applog_lock;
 pthread_mutex_t stats_lock;
+pthread_mutex_t rpc2_job_lock;
+pthread_mutex_t rpc2_login_lock;
 uint8_t need_restart = 0;
 uint32_t accepted_count = 0L;
 uint32_t rejected_count = 0L;
@@ -96,6 +98,15 @@ double net_diff = 0.;
 double net_hashrate = 0.;
 // conditional mining
 bool conditional_state[MAX_CPUS] = {0};
+bool jsonrpc_2 = false;
+char rpc2_id[64] = "";
+char *rpc2_blob = NULL;
+size_t rpc2_bloblen = 0;
+uint32_t rpc2_target = 0;
+char *rpc2_job_id = NULL;
+
+
+
 double opt_max_temp = 0.0;
 double opt_max_diff = 0.0;
 double opt_max_rate = 0.0;
@@ -196,6 +207,68 @@ static inline void work_copy(struct work *dest, const struct work *src) {
     }
 }
 
+bool rpc2_stratum_job(struct stratum_ctx *sctx, json_t *params) {
+    bool ret = false;
+    pthread_mutex_lock(&sctx->work_lock);
+    ret = rpc2_job_decode(params, &sctx->work);
+
+    if (ret) {
+        work_free(&g_work);
+        work_copy(&g_work, &sctx->work);
+        g_work_time = 0;
+    }
+
+    pthread_mutex_unlock(&sctx->work_lock);
+
+    return ret;
+}
+
+bool rpc2_login(CURL *curl) {
+    json_t *val;
+    bool rc = false;
+    struct timeval tv_start, tv_end, diff;
+    char s[JSON_BUF_LEN];
+
+    if (!jsonrpc_2)
+        return false;
+
+    snprintf(s, JSON_BUF_LEN, "{\"method\": \"login\", \"params\": {"
+                     "\"login\": \"%s\", \"pass\": \"%s\", \"agent\": \"%s\"}, \"id\": 1}",
+             rpc_user, rpc_pass, USER_AGENT);
+
+    gettimeofday(&tv_start, NULL);
+    val = json_rpc_call(curl, rpc_url, rpc_userpass, s, NULL, 0);
+    gettimeofday(&tv_end, NULL);
+
+    if (!val)
+        goto end;
+
+//	applog(LOG_DEBUG, "JSON value: %s", json_dumps(val, 0));
+
+    rc = rpc2_login_decode(val);
+
+    json_t *result = json_object_get(val, "result");
+
+    if (!result)
+        goto end;
+
+    json_t *job = json_object_get(result, "job");
+    if (!rpc2_job_decode(job, &g_work)) {
+        goto end;
+    }
+
+    if (opt_debug && rc) {
+        timeval_subtract(&diff, &tv_end, &tv_start);
+        applog(LOG_DEBUG, "DEBUG: authenticated in %d ms",
+               diff.tv_sec * 1000 + diff.tv_usec / 1000);
+    }
+
+    json_decref(val);
+    end:
+    return rc;
+}
+
+
 /* compute nbits to get the network diff */
 static void calc_network_diff(struct work *work) {
     uint32_t nbits = swab32(work->data[18]);
@@ -207,35 +280,6 @@ static void calc_network_diff(struct work *work) {
     if (opt_debug)
         applog(LOG_DEBUG, "net diff: %f -> shift %u, bits %08x", d, shift, bits);
     net_diff = d;
-}
-
-static bool work_decode(const json_t *val, struct work *work) {
-    int i;
-    int data_size = 128, target_size = sizeof(work->target);
-    int adata_sz = 32, atarget_sz = ARRAY_SIZE(work->target);
-
-    if (unlikely(!jobj_binary(val, "data", work->data, data_size))) {
-        applog(LOG_ERR, "JSON invalid data");
-        goto err_out;
-    }
-    if (unlikely(!jobj_binary(val, "target", work->target, target_size))) {
-        applog(LOG_ERR, "JSON invalid target");
-        goto err_out;
-    }
-
-    for (i = 0; i < adata_sz; i++)
-        work->data[i] = le32dec(work->data + i);
-    for (i = 0; i < atarget_sz; i++)
-        work->target[i] = le32dec(work->target + i);
-
-    work->targetdiff = target_to_diff(work->target);
-
-    // for api stats, on longpoll pools
-    stratum_diff = work->targetdiff;
-    return true;
-
-    err_out:
-    return false;
 }
 
 static int share_result(int result, const char *reason) {
@@ -264,18 +308,29 @@ static bool submit_upstream_work(CURL *curl, struct work *work) {
 
     uint32_t ntime, nonce;
     char ntimestr[9], noncestr[9];
+    if (jsonrpc_2) {
+        uchar hash[32];
 
-    char *xnonce2str;
-    le32enc(&ntime, work->data[17]);
-    le32enc(&nonce, work->data[19]);
+        bin2hex(noncestr, (const unsigned char *) work->data + 39, 4);
+        cryptonight_hash(hash, work->data, 76);
+        char *hashhex = abin2hex(hash, 32);
+        snprintf(s, JSON_BUF_LEN,
+                 "{\"method\": \"submit\", \"params\": {\"id\": \"%s\", \"job_id\": \"%s\", \"nonce\": \"%s\", \"result\": \"%s\"}, \"id\":4}\r\n",
+                 rpc2_id, work->job_id, noncestr, hashhex);
+        free(hashhex);
+    } else {
+        char *xnonce2str;
+        le32enc(&ntime, work->data[17]);
+        le32enc(&nonce, work->data[19]);
 
-    bin2hex(ntimestr, (const unsigned char *) (&ntime), 4);
-    bin2hex(noncestr, (const unsigned char *) (&nonce), 4);
-    xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
-    snprintf(s, JSON_BUF_LEN,
-             "{\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
-             rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
-    free(xnonce2str);
+        bin2hex(ntimestr, (const unsigned char *) (&ntime), 4);
+        bin2hex(noncestr, (const unsigned char *) (&nonce), 4);
+        xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
+        snprintf(s, JSON_BUF_LEN,
+                 "{\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
+                 rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
+        free(xnonce2str);
+    }
     // store to keep/display solved blocks (work struct not linked on accept notification)
 
     if (unlikely(!stratum_send_line(&stratum, s))) {
@@ -288,15 +343,20 @@ static bool submit_upstream_work(CURL *curl, struct work *work) {
     return rc;
 }
 
-static const char *getwork_req = "{\"method\": \"getwork\", \"params\": [], \"id\":0}\r\n";
-
-static bool get_upstream_work(CURL *curl, struct work *work) {
+static bool get_upstream_work(CURL *curl) {
     json_t *val;
     int err;
     struct timeval tv_start, tv_end;
 
     gettimeofday(&tv_start, NULL);
-    val = json_rpc_call(curl, rpc_url, rpc_userpass, getwork_req, &err, 0);
+    char *getwork_req = "{\"method\": \"getwork\", \"params\": [], \"id\":0}\r\n";
+    if (jsonrpc_2) {
+        char s[128];
+        snprintf(s, 128, "{\"method\": \"getjob\", \"params\": {\"id\": \"%s\"}, \"id\":1}\r\n", rpc2_id);
+        val = json_rpc2_call(curl, rpc_url, rpc_userpass, s, NULL, 0);
+    } else {
+        val = json_rpc_call(curl, rpc_url, rpc_userpass, getwork_req, &err, 0);
+    }
     gettimeofday(&tv_end, NULL);
 
     if (val)
@@ -330,7 +390,7 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl) {
         return false;
 
     /* obtain new work from bitcoin via JSON-RPC */
-    while (!get_upstream_work(curl, ret_work)) {
+    while (!get_upstream_work(curl)) {
         if (unlikely((opt_retries >= 0) && (++failures > opt_retries))) {
             applog(LOG_ERR, "json_rpc_call failed, terminating workio thread");
             free(ret_work);
@@ -439,52 +499,57 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work) {
     int i, headersize = 0;
 
     pthread_mutex_lock(&sctx->work_lock);
+    if (jsonrpc_2) {
+        work_free(work);
+        work_copy(work, &sctx->work);
+        pthread_mutex_unlock(&sctx->work_lock);
+    } else {
+        free(work->job_id);
+        work->job_id = strdup(sctx->job.job_id);
+        work->xnonce2_len = sctx->xnonce2_size;
+        work->xnonce2 = (uchar *) realloc(work->xnonce2, sctx->xnonce2_size);
+        memcpy(work->xnonce2, sctx->job.xnonce2, sctx->xnonce2_size);
+        sha256d(merkle_root, sctx->job.coinbase, (int) sctx->job.coinbase_size);
 
-    free(work->job_id);
-    work->job_id = strdup(sctx->job.job_id);
-    work->xnonce2_len = sctx->xnonce2_size;
-    work->xnonce2 = (uchar *) realloc(work->xnonce2, sctx->xnonce2_size);
-    memcpy(work->xnonce2, sctx->job.xnonce2, sctx->xnonce2_size);
-    sha256d(merkle_root, sctx->job.coinbase, (int) sctx->job.coinbase_size);
-
-    if (!headersize)
-        for (i = 0; i < sctx->job.merkle_count; i++) {
-            memcpy(merkle_root + 32, sctx->job.merkle[i], 32);
-            sha256d(merkle_root, merkle_root, 64);
-        }
+        if (!headersize)
+            for (i = 0; i < sctx->job.merkle_count; i++) {
+                memcpy(merkle_root + 32, sctx->job.merkle[i], 32);
+                sha256d(merkle_root, merkle_root, 64);
+            }
 
 //    TODO: xnonce2++ should be more elegant
-    for (size_t t = 0; t < sctx->xnonce2_size && !(++sctx->job.xnonce2[t]); t++);
+        for (size_t t = 0; t < sctx->xnonce2_size && !(++sctx->job.xnonce2[t]); t++);
 
-    /* Assemble block header */
-    memset(work->data, 0, 128);
-    work->data[0] = le32dec(sctx->job.version);
-    for (i = 0; i < 8; i++)
-        work->data[1 + i] = le32dec((uint32_t *) sctx->job.prevhash + i);
-    for (i = 0; i < 8; i++)
-        work->data[9 + i] = be32dec((uint32_t *) merkle_root + i);
+        /* Assemble block header */
+        memset(work->data, 0, 128);
+        work->data[0] = le32dec(sctx->job.version);
+        for (i = 0; i < 8; i++)
+            work->data[1 + i] = le32dec((uint32_t *) sctx->job.prevhash + i);
+        for (i = 0; i < 8; i++)
+            work->data[9 + i] = be32dec((uint32_t *) merkle_root + i);
 
-    work->data[17] = le32dec(sctx->job.ntime);
-    work->data[18] = le32dec(sctx->job.nbits);
-    // required ?
-    work->data[20] = 0x80000000;
-    work->data[31] = 0x00000280;
+        work->data[17] = le32dec(sctx->job.ntime);
+        work->data[18] = le32dec(sctx->job.nbits);
+        // required ?
+        work->data[20] = 0x80000000;
+        work->data[31] = 0x00000280;
 
-    pthread_mutex_unlock(&sctx->work_lock);
+        pthread_mutex_unlock(&sctx->work_lock);
 
-    if (opt_debug) {
-        char *xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
-        applog(LOG_DEBUG, "generating new xnonce2: job_id='%s' extranonce2=%s ntime=%08x", work->job_id, xnonce2str, swab32(work->data[17]));
-        free(xnonce2str);
-    }
+        if (opt_debug) {
+            char *xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
+            applog(LOG_DEBUG, "generating new xnonce2: job_id='%s' extranonce2=%s ntime=%08x", work->job_id, xnonce2str, swab32(work->data[17]));
+            free(xnonce2str);
+        }
 
-    work_set_target(work, sctx->job.diff);
+        work_set_target(work, sctx->job.diff);
 
-    if (stratum_diff != sctx->job.diff) {
-        char sdiff[32] = {0};
-        stratum_diff = sctx->job.diff;
-        if (opt_debug && work->targetdiff != stratum_diff)
-            snprintf(sdiff, 32, " (%.5f)", work->targetdiff);
+        if (stratum_diff != sctx->job.diff) {
+            char sdiff[32] = {0};
+            stratum_diff = sctx->job.diff;
+            if (opt_debug && work->targetdiff != stratum_diff)
+                snprintf(sdiff, 32, " (%.5f)", work->targetdiff);
+        }
     }
 }
 
@@ -493,12 +558,10 @@ static void *miner_thread(void *userdata) {
     int thr_id = mythr->id;
     struct work work;
     uint32_t max_nonce;
-    uint32_t end_nonce = 0xffffffffU / -0x20;
+    uint32_t end_nonce = 0xffffffffU;
     time_t tm_rate_log = 0;
     time_t firstwork_time = 0;
     char s[16];
-    int i;
-
     memset(&work, 0, sizeof(work));
     while (1) {
         uint64_t hashes_done;
@@ -510,23 +573,27 @@ static void *miner_thread(void *userdata) {
         int wkcmp_sz = nonce_oft;
         int rc = 0;
 
+        if (jsonrpc_2) {
+            wkcmp_sz = nonce_oft = 39;
+        }
+
         uint32_t *nonceptr = (uint32_t *) (((char *) work.data) + nonce_oft);
-
-        while (time(NULL) >= g_work_time + 120)
+        while (!jsonrpc_2 && time(NULL) >= g_work_time + 120)
             sleep(1);
-
         pthread_mutex_lock(&g_work_lock);
+
         // to clean: is g_work loaded before the memcmp ?
-        regen_work = regen_work || ((*nonceptr) >= end_nonce &&
-                                    !(memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], wkcmp_sz)));
+        regen_work = regen_work || ((*nonceptr) >= end_nonce
+                                    && !(memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], wkcmp_sz) ||
+                                         jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0));
         if (regen_work) {
             stratum_gen_work(&stratum, &g_work);
         }
 
-        if (memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], wkcmp_sz)) {
+        if (memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], wkcmp_sz) ||
+            jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0) {
             work_free(&work);
             work_copy(&work, &g_work);
-//			push work here
             nonceptr = (uint32_t *) (((char *) work.data) + nonce_oft);
             *nonceptr = 0xffffffffU;
         } else
@@ -534,11 +601,10 @@ static void *miner_thread(void *userdata) {
         pthread_mutex_unlock(&g_work_lock);
         work_restart[thr_id].restart = 0;
 
-        if (!work.data[0] && !opt_benchmark) {
+        if (!work.data[0]) {
             sleep(1);
             continue;
         }
-        /* adjust max_nonce to meet target scan time */
         max64 = LP_SCANTIME;
 
         /* time limit */
@@ -574,13 +640,22 @@ static void *miner_thread(void *userdata) {
             max_nonce = (*nonceptr) + (uint32_t) max64;
 
         hashes_done = 0;
-        gettimeofday(&tv_start, NULL);
+        gettimeofday((struct timeval *) &tv_start, NULL);
 
         if (firstwork_time == 0)
             firstwork_time = time(NULL);
 
         /* scan nonces for a proof-of-work hash */
-        rc = scanhash_x11(thr_id, &work, max_nonce, &hashes_done);
+        switch (opt_algo) {
+            case ALGO_XMR:
+                rc = scanhash_cryptonight(thr_id, &work, max_nonce, &hashes_done);
+                break;
+            case ALGO_X11:
+                rc = scanhash_x11(thr_id, &work, max_nonce, &hashes_done);
+                break;
+            default:
+                goto out;
+        }
 
         /* record scanhash elapsed time */
         gettimeofday(&tv_end, NULL);
@@ -595,17 +670,18 @@ static void *miner_thread(void *userdata) {
             sprintf(s, thr_hashrates[thr_id] >= 1e6 ? "%.0f" : "%.2f",
                     thr_hashrates[thr_id] / 1e3);
             applog(LOG_INFO, "CPU #%d: %s kH/s", thr_id, s);
+            break;
             tm_rate_log = time(NULL);
         }
-
         /* if nonce found, submit work */
-        if (rc && !opt_benchmark) {
+        if (rc) {
             if (!submit_work(mythr, &work))
                 break;
         }
     }
-
+    out:
     tq_freeze(mythr->q);
+
     return NULL;
 }
 
@@ -708,12 +784,25 @@ static bool stratum_handle_response(char *buf) {
     if (!id_val || json_is_null(id_val))
         goto out;
 
+    if (jsonrpc_2) {
+        if (!res_val && !err_val)
+            goto out;
 
-    if (!res_val || json_integer_value(id_val) < 4)
-        goto out;
-    valid = json_is_true(res_val);
-    share_result(valid, err_val ? json_string_value(json_array_get(err_val, 1)) : NULL);
+        json_t *status = json_object_get(res_val, "status");
+        if (status) {
+            const char *s = json_string_value(status);
+            valid = !strcmp(s, "OK") && json_is_null(err_val);
+        } else {
+            valid = json_is_null(err_val);
+        }
+        share_result(valid, err_val ? json_string_value(err_val) : NULL);
 
+    } else {
+        if (!res_val || json_integer_value(id_val) < 4)
+            goto out;
+        valid = json_is_true(res_val);
+        share_result(valid, err_val ? json_string_value(json_array_get(err_val, 1)) : NULL);
+    }
     ret = true;
 
     out:
@@ -721,6 +810,10 @@ static bool stratum_handle_response(char *buf) {
         json_decref(val);
 
     return ret;
+}
+
+void restart_threads(void) {
+    work_restart[0].restart = 1;
 }
 
 static void *stratum_thread(void *userdata) {
@@ -739,9 +832,11 @@ static void *stratum_thread(void *userdata) {
             pthread_mutex_lock(&g_work_lock);
             g_work_time = 0;
             pthread_mutex_unlock(&g_work_lock);
+            restart_threads();
 
-            if (!stratum_connect(&stratum, stratum.url) || !stratum_subscribe(&stratum) ||
-                !stratum_authorize(&stratum, rpc_user, rpc_pass)) {
+            if (!stratum_connect(&stratum, stratum.url)
+                || !stratum_subscribe(&stratum)
+                || !stratum_authorize(&stratum, rpc_user, rpc_pass)) {
                 stratum_disconnect(&stratum);
                 if (opt_retries >= 0 && ++failures > opt_retries) {
                     applog(LOG_ERR, "...terminating workio thread");
@@ -752,6 +847,11 @@ static void *stratum_thread(void *userdata) {
                     applog(LOG_ERR, "...retry after %d seconds", opt_fail_pause);
                 sleep(opt_fail_pause);
             }
+
+            if (jsonrpc_2) {
+                work_free(&g_work);
+                work_copy(&g_work, &stratum.work);
+            }
         }
 
         if (stratum.job.job_id && (!g_work_time || strcmp(stratum.job.job_id, g_work.job_id))) {
@@ -760,19 +860,20 @@ static void *stratum_thread(void *userdata) {
             time(&g_work_time);
             pthread_mutex_unlock(&g_work_lock);
 
-            if (stratum.job.clean) {
+            if (stratum.job.clean || jsonrpc_2) {
                 static uint32_t last_bloc_height;
                 if (!opt_quiet && last_bloc_height != stratum.bloc_height) {
                     last_bloc_height = stratum.bloc_height;
                     if (net_diff > 0.)
-                        applog(LOG_INFO, "%s block %d, diff %.3f", algo_names[opt_algo],
+                        applog(LOG_BLUE, "%s block %d, diff %.3f", algo_names[opt_algo],
                                stratum.bloc_height, net_diff);
                     else
-                        applog(LOG_INFO, "%s %s block %d", short_url, algo_names[opt_algo],
+                        applog(LOG_BLUE, "%s %s block %d", short_url, algo_names[opt_algo],
                                stratum.bloc_height);
                 }
+                restart_threads();
             } else if (opt_debug && !opt_quiet) {
-                applog(LOG_INFO, "%s asks job %lu for block %d", short_url,
+                applog(LOG_BLUE, "%s asks job %lu for block %d", short_url,
                        strtoul(stratum.job.job_id, NULL, 16), stratum.bloc_height);
             }
         }
@@ -794,7 +895,6 @@ static void *stratum_thread(void *userdata) {
     out:
     return NULL;
 }
-
 static void show_usage_and_exit(int status) {
     if (status)
         fprintf(stderr, "Try `" PACKAGE_NAME " --help' for more information.\n");
@@ -1154,13 +1254,21 @@ int main(int argc, char *argv[]) {
     applog(LOG_INFO, "Using config %s", defconfig);
     parse_arg('c', defconfig);
     parse_cmdline(argc, argv);
+    opt_uart = cmd_speed && nonce_speed;
+    if (opt_algo == ALGO_XMR)
+        jsonrpc_2 = true;
+
     pthread_mutex_init(&stats_lock, NULL);
     pthread_mutex_init(&g_work_lock, NULL);
     pthread_mutex_init(&stratum.sock_lock, NULL);
     pthread_mutex_init(&stratum.work_lock, NULL);
 
+    if (jsonrpc_2) {
+        pthread_mutex_init(&rpc2_job_lock, NULL);
+        pthread_mutex_init(&rpc2_login_lock, NULL);
+    }
+
     flags = !opt_benchmark && strncmp(rpc_url, "https:", 6) ? (CURL_GLOBAL_ALL & ~CURL_GLOBAL_SSL) : CURL_GLOBAL_ALL;
-    opt_uart = cmd_speed && nonce_speed;
 
     if (curl_global_init(flags)) {
         applog(LOG_ERR, "CURL initialization failed");
@@ -1171,17 +1279,8 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, signal_handler);
 
     work_restart = (struct work_restart *) calloc(1, sizeof(*work_restart));
-    if (!work_restart)
-        return 1;
-
     thr_info = (struct thr_info *) calloc(3, sizeof(*thr));
-    if (!thr_info)
-        return 1;
-
     thr_hashrates = (double *) calloc(1, sizeof(double));
-    if (!thr_hashrates)
-        return 1;
-
     if (rpc_pass && rpc_user)
         opt_stratum_stats = (strstr(rpc_pass, "stats") != NULL) || (strcmp(rpc_user, "benchmark") == 0);
 

@@ -220,6 +220,9 @@ struct work;
 int scanhash_x11(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
 int scanhash_cryptonight(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
 
+void cryptonight_hash(void *output, const void *input, int len);
+
+
 typedef enum reg{
     CHIP_ID_REG,            //1				0
     PLL_REG,                //4				1

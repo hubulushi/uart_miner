@@ -1,9 +1,7 @@
 {
-  "url" : "stratum+tcp://ispace.co.uk:4115",
-  "userpass" : "mlien.miner:x",
-  "algo": "x11",
-  "cmd-path": "/dev/ttyUSB0:115200",
-  "nonce-path": "/dev/ttyUSB1:115200",
+  "url": "stratum+tcp://xmr-eu.dwarfpool.com:8080",
+  "userpass": "437ZXT6x2xt8dZJpoowFKT4CMn8jrmVP1iT7jPmUuatt7bKc1ExzZcSi9NFekqcmWgYfZNU63oLeaeaEFpWf7etWF3iZk5D:x",
+  "algo": "xmr",
   "threads" : 1,
   "debug" : true,
   "show-diff": true

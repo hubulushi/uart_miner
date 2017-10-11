@@ -19,7 +19,6 @@
 #include <string.h>
 #include <stdbool.h>
 #include <inttypes.h>
-#include <limits.h>
 #include <errno.h>
 #include <unistd.h>
 #include <jansson.h>
@@ -1095,7 +1094,7 @@ bool stratum_connect(struct stratum_ctx *sctx, const char *url) {
 
 #if LIBCURL_VERSION_NUM < 0x071101
     /* CURLINFO_LASTSOCKET is broken on Win64; only use it as a last resort */
-    curl_easy_getinfo(curl, CURLINFO_LASTSOCKET, (long *)&sctx->sock);
+	curl_easy_getinfo(curl, CURLINFO_LASTSOCKET, (long *)&sctx->sock);
 #endif
 
     return true;
@@ -1183,13 +1182,15 @@ bool stratum_subscribe(struct stratum_ctx *sctx) {
     json_error_t err;
     bool ret = false, retry = false;
 
+    if (jsonrpc_2)
+        return true;
+
     start:
     s = (char *) malloc(128 + (sctx->session_id ? strlen(sctx->session_id) : 0));
     if (retry)
         sprintf(s, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": []}");
     else if (sctx->session_id)
-        sprintf(s, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": [\"" USER_AGENT "\", \"%s\"]}",
-                sctx->session_id);
+        sprintf(s, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": [\"" USER_AGENT "\", \"%s\"]}", sctx->session_id);
     else
         sprintf(s, "{\"id\": 1, \"method\": \"mining.subscribe\", \"params\": [\"" USER_AGENT "\"]}");
 
@@ -1231,6 +1232,8 @@ bool stratum_subscribe(struct stratum_ctx *sctx) {
     }
 
     sid = get_stratum_session_id(res_val);
+    if (opt_debug && sid)
+        applog(LOG_DEBUG, "Stratum session id: %s", sid);
 
     pthread_mutex_lock(&sctx->work_lock);
     if (sctx->session_id)
@@ -1261,8 +1264,6 @@ bool stratum_subscribe(struct stratum_ctx *sctx) {
     return ret;
 }
 
-extern bool opt_extranonce;
-
 bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *pass) {
     json_t *val = NULL, *res_val, *err_val;
     char *s, *sret;
@@ -1270,8 +1271,16 @@ bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *p
     bool ret = false;
     int req_id = 0;
 
-    s = (char *) malloc(80 + strlen(user) + strlen(pass));
-    sprintf(s, "{\"id\": 2, \"method\": \"mining.authorize\", \"params\": [\"%s\", \"%s\"]}", user, pass);
+    if (jsonrpc_2) {
+        s = (char *) malloc(300 + strlen(user) + strlen(pass));
+        sprintf(s, "{\"method\": \"login\", \"params\": {"
+                        "\"login\": \"%s\", \"pass\": \"%s\", \"agent\": \"%s\"}, \"id\": 1}",
+                user, pass, USER_AGENT);
+    } else {
+        s = (char *) malloc(80 + strlen(user) + strlen(pass));
+        sprintf(s, "{\"id\": 2, \"method\": \"mining.authorize\", \"params\": [\"%s\", \"%s\"]}",
+                user, pass);
+    }
 
     if (!stratum_send_line(sctx, s))
         goto out;
@@ -1302,34 +1311,15 @@ bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *p
         goto out;
     }
 
+    if (jsonrpc_2) {
+        rpc2_login_decode(val);
+        json_t *job_val = json_object_get(res_val, "job");
+        pthread_mutex_lock(&sctx->work_lock);
+        if (job_val) rpc2_job_decode(job_val, &sctx->work);
+        pthread_mutex_unlock(&sctx->work_lock);
+    }
+
     ret = true;
-
-    // subscribe to extranonce (optional)
-    sprintf(s, "{\"id\": 3, \"method\": \"mining.extranonce.subscribe\", \"params\": []}");
-    if (!stratum_send_line(sctx, s))
-        goto out;
-
-    if (!socket_full(sctx->sock, 1)) {
-        if (opt_debug)
-            applog(LOG_DEBUG, "stratum extranonce subscribe timed out");
-        goto out;
-    }
-
-    sret = stratum_recv_line(sctx);
-    if (sret) {
-        json_t *extra = JSON_LOADS(sret, &err);
-        if (!extra) {
-            applog(LOG_WARNING, "JSON decode failed(%d): %s", err.line, err.text);
-        } else {
-            if (json_integer_value(json_object_get(extra, "id")) != 3) {
-                // we receive a standard method if extranonce is ignored
-                if (!stratum_handle_method(sctx, sret))
-                    applog(LOG_WARNING, "Stratum answer id is not correct!");
-            }
-            json_decref(extra);
-        }
-        free(sret);
-    }
 
     out:
     free(s);
@@ -1338,7 +1328,6 @@ bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *p
 
     return ret;
 }
-
 
 /**
  * Extract bloc height     L H... here len=3, height=0x1333e8
@@ -1753,6 +1742,12 @@ bool stratum_handle_method(struct stratum_ctx *sctx, const char *s) {
 
     params = json_object_get(val, "params");
 
+    if (jsonrpc_2) {
+        if (!strcasecmp(method, "job")) {
+            ret = rpc2_stratum_job(sctx, params);
+        }
+        goto out;
+    }
 
     id = json_object_get(val, "id");
 
@@ -1809,7 +1804,6 @@ bool stratum_handle_method(struct stratum_ctx *sctx, const char *s) {
 
     return ret;
 }
-
 struct thread_q *tq_new(void) {
     struct thread_q *tq;
 
@@ -1979,5 +1973,196 @@ void print_hash_tests(void) {
     printf("\n");
 
     free(scratchbuf);
+}
+
+// -------------------- RPC 2.0 (XMR/AEON) -------------------------
+
+extern pthread_mutex_t rpc2_login_lock;
+extern pthread_mutex_t rpc2_job_lock;
+
+bool rpc2_login_decode(const json_t *val) {
+    const char *id;
+    const char *s;
+
+    json_t *res = json_object_get(val, "result");
+    if (!res) {
+        applog(LOG_ERR, "JSON invalid result");
+        goto err_out;
+    }
+
+    json_t *tmp;
+    tmp = json_object_get(res, "id");
+    if (!tmp) {
+        applog(LOG_ERR, "JSON inval id");
+        goto err_out;
+    }
+    id = json_string_value(tmp);
+    if (!id) {
+        applog(LOG_ERR, "JSON id is not a string");
+        goto err_out;
+    }
+
+    memcpy(&rpc2_id, id, 64);
+
+    if (opt_debug)
+        applog(LOG_DEBUG, "Auth id: %s", id);
+
+    tmp = json_object_get(res, "status");
+    if (!tmp) {
+        applog(LOG_ERR, "JSON inval status");
+        goto err_out;
+    }
+    s = json_string_value(tmp);
+    if (!s) {
+        applog(LOG_ERR, "JSON status is not a string");
+        goto err_out;
+    }
+    if (strcmp(s, "OK")) {
+        applog(LOG_ERR, "JSON returned status \"%s\"", s);
+        return false;
+    }
+
+    return true;
+
+    err_out:
+    applog(LOG_WARNING, "%s: fail", __func__);
+    return false;
+}
+
+json_t *json_rpc2_call_recur(CURL *curl, const char *url, const char *userpass, json_t *rpc_req, int *curl_err, int flags, int recur) {
+    if (recur >= 5) {
+        if (opt_debug)
+            applog(LOG_DEBUG, "Failed to call rpc command after %i tries", recur);
+        return NULL;
+    }
+    if (!strcmp(rpc2_id, "")) {
+        if (opt_debug)
+            applog(LOG_DEBUG, "Tried to call rpc2 command before authentication");
+        return NULL;
+    }
+    json_t *params = json_object_get(rpc_req, "params");
+    if (params) {
+        json_t *auth_id = json_object_get(params, "id");
+        if (auth_id) {
+            json_string_set(auth_id, rpc2_id);
+        }
+    }
+    json_t *res = json_rpc_call(curl, url, userpass, json_dumps(rpc_req, 0),
+                                curl_err, flags | JSON_RPC_IGNOREERR);
+    if (!res) goto end;
+    json_t *error = json_object_get(res, "error");
+    if (!error) goto end;
+    json_t *message;
+    if (json_is_string(error))
+        message = error;
+    else
+        message = json_object_get(error, "message");
+    if (!message || !json_is_string(message)) goto end;
+    const char *mes = json_string_value(message);
+    if (!strcmp(mes, "Unauthenticated")) {
+        pthread_mutex_lock(&rpc2_login_lock);
+        rpc2_login(curl);
+        sleep(1);
+        pthread_mutex_unlock(&rpc2_login_lock);
+        return json_rpc2_call_recur(curl, url, userpass, rpc_req,
+                                    curl_err, flags, recur + 1);
+    } else if (!strcmp(mes, "Low difficulty share") || !strcmp(mes, "Block expired") || !strcmp(mes, "Invalid job id") || !strcmp(mes, "Duplicate share")) {
+        json_t *result = json_object_get(res, "result");
+        if (!result) {
+            goto end;
+        }
+        json_object_set(result, "reject-reason", json_string(mes));
+    } else {
+        applog(LOG_ERR, "json_rpc2.0 error: %s", mes);
+        return NULL;
+    }
+    end:
+    return res;
+}
+
+json_t *json_rpc2_call(CURL *curl, const char *url, const char *userpass, const char *rpc_req, int *curl_err, int flags) {
+    json_t *req_json = JSON_LOADS(rpc_req, NULL);
+    json_t *res = json_rpc2_call_recur(curl, url, userpass, req_json, curl_err, flags, 0);
+    json_decref(req_json);
+    return res;
+}
+
+bool rpc2_job_decode(const json_t *job, struct work *work) {
+    if (!jsonrpc_2) {
+        applog(LOG_ERR, "Tried to decode job without JSON-RPC 2.0");
+        return false;
+    }
+    json_t *tmp;
+    tmp = json_object_get(job, "job_id");
+    if (!tmp) {
+        applog(LOG_ERR, "JSON invalid job id");
+        goto err_out;
+    }
+    const char *job_id = json_string_value(tmp);
+    tmp = json_object_get(job, "blob");
+    if (!tmp) {
+        applog(LOG_ERR, "JSON invalid blob");
+        goto err_out;
+    }
+    const char *hexblob = json_string_value(tmp);
+    size_t blobLen = strlen(hexblob);
+    if (blobLen % 2 != 0 || ((blobLen / 2) < 40 && blobLen != 0) || (blobLen / 2) > 128) {
+        applog(LOG_ERR, "JSON invalid blob length");
+        goto err_out;
+    }
+    if (blobLen != 0) {
+        uint32_t target = 0;
+        pthread_mutex_lock(&rpc2_job_lock);
+        uchar *blob = (uchar *) malloc(blobLen / 2);
+        if (!hex2bin(blob, hexblob, blobLen / 2)) {
+            applog(LOG_ERR, "JSON invalid blob");
+            pthread_mutex_unlock(&rpc2_job_lock);
+            goto err_out;
+        }
+        rpc2_bloblen = blobLen / 2;
+        if (rpc2_blob) free(rpc2_blob);
+        rpc2_blob = (char *) malloc(rpc2_bloblen);
+        if (!rpc2_blob) {
+            applog(LOG_ERR, "RPC2 OOM!");
+            goto err_out;
+        }
+        memcpy(rpc2_blob, blob, blobLen / 2);
+        free(blob);
+
+        jobj_binary(job, "target", &target, 4);
+        if (rpc2_target != target) {
+            double hashrate = 0.0;
+            pthread_mutex_lock(&stats_lock);
+            hashrate += thr_hashrates[0];
+            pthread_mutex_unlock(&stats_lock);
+            double difficulty = (((double) 0xffffffff) / target);
+            if (!opt_quiet) {
+                // xmr pool diff can change a lot...
+                applog(LOG_WARNING, "Stratum difficulty set to %g", difficulty);
+            }
+            stratum_diff = difficulty;
+            rpc2_target = target;
+        }
+
+        if (rpc2_job_id) free(rpc2_job_id);
+        rpc2_job_id = strdup(job_id);
+        pthread_mutex_unlock(&rpc2_job_lock);
+    }
+    if (work) {
+        if (!rpc2_blob) {
+            applog(LOG_WARNING, "Work requested before it was received");
+            goto err_out;
+        }
+        memcpy(work->data, rpc2_blob, rpc2_bloblen);
+        memset(work->target, 0xff, sizeof(work->target));
+        work->target[7] = rpc2_target;
+        if (work->job_id) free(work->job_id);
+        work->job_id = strdup(rpc2_job_id);
+    }
+    return true;
+
+    err_out:
+    applog(LOG_WARNING, "%s", __func__);
+    return false;
 }
 
