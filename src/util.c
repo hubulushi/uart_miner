@@ -9,7 +9,6 @@
  * any later version.  See COPYING for more details.
  */
 
-#define _GNU_SOURCE
 
 #include "miner-config.h"
 
@@ -134,9 +133,8 @@ void get_defconfig_path(char *out, size_t bufsize, char *argv0) {
     char *dir = dirname(cmd);
     const char *sep = strstr(dir, "\\") ? "\\" : "/";
     struct stat info = {0};
-    snprintf(out, bufsize, "%s\\.uart_miner\\uart_miner_conf.json", getenv("HOME"));
     if (dir && stat(out, &info) != 0) {
-        snprintf(out, bufsize, "%s%suart_miner_conf.json", dir, sep);
+        snprintf(out, bufsize, "%s%s..%suart_miner_conf.json", dir, sep, sep);
     }
     if (stat(out, &info) != 0) {
         out[0] = '\0';

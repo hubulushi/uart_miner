@@ -2,6 +2,8 @@
 
 uint8_t reg_size[24]= {1, 4, 2, 2, 76, 64, 2, 4, 4, 1, 1, 8, 4, 32, 32, 4, 4, 1, 6, 4, 4, 4, 2, 64};
 extern long nonce_cnt;
+extern char *cmd_path, *nonce_path;
+extern uint32_t cmd_speed, nonce_speed;
 uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
     // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
     if (board->current_chip == chip_id)
@@ -121,7 +123,7 @@ uint8_t board_assign_nonce(board_t *board){
     return 0;
 }
 uint8_t board_init_chip_array(board_t *board){
-    board_open_serials(board, "/dev/ttyUSB0", 115200, "/dev/ttyUSB1", 115200);
+    board_open_serials(board, cmd_path, cmd_speed, nonce_path, nonce_speed);
     uint8_t data_in = 0x80;
     uint8_t* buf = malloc(1);
     serial_set_parity(&board->cmd_serial, PARITY_MARK);
@@ -146,7 +148,7 @@ uint8_t board_init_chip_array(board_t *board){
     board_assign_nonce(board);
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
-    for (int j = 1; j <= board->chip_nums; ++j) {
+    for (uint8_t j = 1; j <= board->chip_nums; ++j) {
         board_start_self_test(board, j);
     }
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);

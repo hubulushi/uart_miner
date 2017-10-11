@@ -45,21 +45,20 @@ struct workio_cmd {
 
 enum algos {
     ALGO_X11,         /* X11 */
-    ALGO_TTY,         /* use tty to connect asic or fpga */
+    ALGO_XMR,
     ALGO_COUNT
 };
 
 static const char *algo_names[] = {
         "x11",
-        "tty",
+        "xmr",
         "\0"
 };
 bool opt_benchmark = false;
 bool opt_debug = true;
 bool want_stratum = true;
-bool allow_mininginfo = true;
 bool use_colors = true;
-bool opt_tty = false;
+bool opt_uart = false;
 bool opt_quiet = false;
 int opt_maxlograte = 5;
 bool opt_protocol = false;
@@ -72,13 +71,12 @@ static int opt_time_limit = 0;
 int opt_timeout = 300;
 static enum algos opt_algo = ALGO_X11;
 int opt_priority = 0;
-int num_cpus;
 long nonce_cnt=1;
 char *rpc_url;
 char *rpc_userpass;
 char *rpc_user, *rpc_pass;
-char *tty_path;
-uint32_t *tty_speed;
+char *cmd_path, *nonce_path;
+uint32_t cmd_speed, nonce_speed;
 char *short_url = NULL;
 char *opt_cert;
 char *opt_proxy;
@@ -108,8 +106,9 @@ Usage:  [OPTIONS]\n\
 Options:\n\
   -a, --algo=ALGO       specify the algorithm to use\n\
                           x11          X11\n\
-                          tty          TTY\n\
-  -z, --tty-path=ttypath:speed  specify the tty port and speed\n\
+                          xmr          xmr\n\
+      --cmd-path=cmdpath:speed  specify the cmd path and speed\n\
+      --nonce-path=noncepath:speed spcify the nonce path and speed\n\
   -o, --url=URL         URL of mining server\n\
   -O, --userpass=U:P    username:password pair for mining server\n\
       --cert=FILE       certificate for mining server using SSL\n\
@@ -139,7 +138,8 @@ static char const short_options[] = "a:b:Bc:CDf:hm:n:p:Px:qr:R:s:t:T:o:u:O:V";
 
 static struct option const options[] = {
         {"algo",            1, NULL, 'a'},
-        {"tty-path",        1, NULL, 'z'},
+        {"cmd-path",        1, NULL, 1010},
+        {"nonce-path",      1, NULL, 1011},
         {"url",             1, NULL, 'o'},
         {"userpass",        1, NULL, 'O'},
         {"cert",            1, NULL, 1001},
@@ -276,7 +276,6 @@ static bool submit_upstream_work(CURL *curl, struct work *work) {
              "{\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
              rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
     free(xnonce2str);
-
     // store to keep/display solved blocks (work struct not linked on accept notification)
 
     if (unlikely(!stratum_send_line(&stratum, s))) {
@@ -845,19 +844,29 @@ void parse_arg(int key, char *arg) {
                 show_usage_and_exit(1);
             }
             break;
-//{ "tty-path", 1, NULL, 'z' },
-        case 'z':
+//{ "cmd-path", 1, NULL, 1010 },
+        case 1010:
             p = strchr(arg, ':');
             if (!p) {
-                fprintf(stderr, "invalid path/to/tty:speed -- '%s'\n", arg);
+                fprintf(stderr, "invalid path/to/cmd:speed -- '%s'\n", arg);
                 show_usage_and_exit(1);
             }
-            opt_tty = true;
-            free(tty_path);
-            tty_path = (char *) calloc(p - arg + 1, 1);
-            strncpy(tty_path, arg, p - arg);
-            free(tty_speed);
-            tty_speed = (uint32_t *) strtol(strdup(++p), NULL, 10);
+            free(cmd_path);
+            cmd_path = (char *) calloc(p - arg + 1, 1);
+            strncpy(cmd_path, arg, p - arg);
+            cmd_speed = (uint32_t) strtol(strdup(++p), NULL, 10);
+            break;
+//{ "nonce-path", 1, NULL, 1011},
+        case 1011:
+            p = strchr(arg, ':');
+            if (!p) {
+                fprintf(stderr, "invalid path/to/nonce:speed -- '%s'\n", arg);
+                show_usage_and_exit(1);
+            }
+            free(nonce_path);
+            nonce_path = (char *) calloc(p - arg + 1, 1);
+            strncpy(nonce_path, arg, p - arg);
+            nonce_speed = (uint32_t) strtol(strdup(++p), NULL, 10);
             break;
 //{ "url", 1, NULL, 'o' },
         case 'o': {            /* --url */
@@ -1139,27 +1148,20 @@ int main(int argc, char *argv[]) {
 
     pthread_mutex_init(&applog_lock, NULL);
 
-    /* parse command line */
-    // parse_cmdline(argc, argv);
-
-    if (!opt_benchmark && !rpc_url) {
-        // try default config file in binary folder
-        char defconfig[PATH_MAX] = {0};
-        get_defconfig_path(defconfig, PATH_MAX, argv[0]);
-        if (strlen(defconfig)) {
-            if (opt_debug)
-                applog(LOG_DEBUG, "Using config %s", defconfig);
-            parse_arg('c', defconfig);
-            parse_cmdline(argc, argv);
-        }
-    }
-
+    // try default config file in binary folder
+    char defconfig[PATH_MAX] = {0};
+    get_defconfig_path(defconfig, PATH_MAX, argv[0]);
+    applog(LOG_INFO, "Using config %s", defconfig);
+    parse_arg('c', defconfig);
+    parse_cmdline(argc, argv);
     pthread_mutex_init(&stats_lock, NULL);
     pthread_mutex_init(&g_work_lock, NULL);
     pthread_mutex_init(&stratum.sock_lock, NULL);
     pthread_mutex_init(&stratum.work_lock, NULL);
 
     flags = !opt_benchmark && strncmp(rpc_url, "https:", 6) ? (CURL_GLOBAL_ALL & ~CURL_GLOBAL_SSL) : CURL_GLOBAL_ALL;
+    opt_uart = cmd_speed && nonce_speed;
+
     if (curl_global_init(flags)) {
         applog(LOG_ERR, "CURL initialization failed");
         return 1;
@@ -1175,12 +1177,11 @@ int main(int argc, char *argv[]) {
     thr_info = (struct thr_info *) calloc(3, sizeof(*thr));
     if (!thr_info)
         return 1;
-// 每个miner线程算力
+
     thr_hashrates = (double *) calloc(1, sizeof(double));
     if (!thr_hashrates)
         return 1;
 
-// Benchmark测试使用
     if (rpc_pass && rpc_user)
         opt_stratum_stats = (strstr(rpc_pass, "stats") != NULL) || (strcmp(rpc_user, "benchmark") == 0);
 
@@ -1217,7 +1218,7 @@ int main(int argc, char *argv[]) {
     if (!thr->q)
         return 1;
 
-    if (opt_algo==ALGO_TTY) {
+    if (opt_uart) {
         err = thread_create(thr, uart_miner_thread);
     } else {
         err = thread_create(thr, miner_thread);
