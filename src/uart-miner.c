@@ -670,7 +670,6 @@ static void *miner_thread(void *userdata) {
             sprintf(s, thr_hashrates[thr_id] >= 1e6 ? "%.0f" : "%.2f",
                     thr_hashrates[thr_id] / 1e3);
             applog(LOG_INFO, "CPU #%d: %s kH/s", thr_id, s);
-            break;
             tm_rate_log = time(NULL);
         }
         /* if nonce found, submit work */
@@ -832,7 +831,6 @@ static void *stratum_thread(void *userdata) {
             pthread_mutex_lock(&g_work_lock);
             g_work_time = 0;
             pthread_mutex_unlock(&g_work_lock);
-            restart_threads();
 
             if (!stratum_connect(&stratum, stratum.url)
                 || !stratum_subscribe(&stratum)
@@ -854,7 +852,7 @@ static void *stratum_thread(void *userdata) {
             }
         }
 
-        if (stratum.job.job_id && (!g_work_time || strcmp(stratum.job.job_id, g_work.job_id))) {
+        if (stratum.work.job_id && (!g_work_time || strcmp(stratum.work.job_id, g_work.job_id))) {
             pthread_mutex_lock(&g_work_lock);
             stratum_gen_work(&stratum, &g_work);
             time(&g_work_time);

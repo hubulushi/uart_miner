@@ -1,5 +1,5 @@
 {
-  "url": "stratum+tcp://xmr-eu.dwarfpool.com:8080",
+  "url": "stratum+tcp://mine.xmrpool.net:3333",
   "userpass": "437ZXT6x2xt8dZJpoowFKT4CMn8jrmVP1iT7jPmUuatt7bKc1ExzZcSi9NFekqcmWgYfZNU63oLeaeaEFpWf7etWF3iZk5D:x",
   "algo": "xmr",
   "threads" : 1,
