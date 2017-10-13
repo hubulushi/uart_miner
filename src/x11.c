@@ -95,9 +95,6 @@ int scanhash_x11(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *ha
 	uint32_t nonce = first_nonce;
 	volatile uint8_t *restart = &(work_restart[thr_id].restart);
 
-	if (opt_benchmark)
-		ptarget[7] = 0x0cff;
-
 	for (int k=0; k < 19; k++)
 		be32enc(&endiandata[k], pdata[k]);
 

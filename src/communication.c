@@ -110,7 +110,7 @@ uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t*
 }
 uint8_t board_assign_nonce(board_t *board){
 //    uint32_t nonce_step = 0xffffffffU / board->chip_nums;
-    uint32_t nonce_step = 0x00400000U;
+    uint32_t nonce_step = 0x01000000U;
     uint32_t nonce = 0x00000000U;
     for (uint8_t i = 1; i <= board->chip_nums; ++i) {
         le32enc(&board->chip_array[i].start_nonce,nonce);
@@ -209,7 +209,7 @@ uint8_t board_wait_for_nonce(board_t *board){
     uint8_t nonce_data[7];
     uint32_t nonce;
     uint8_t check_sum=0x00;
-    if (serial_read(&board->nonce_serial, nonce_data, 7, 2000) > 0) {
+    if (serial_read(&board->nonce_serial, nonce_data, 7, 100) > 0) {
         for (int i = 1; i < 7; ++i)
             check_sum^=nonce_data[i];
         if (check_sum != nonce_data[0])

@@ -54,14 +54,13 @@ static const char *algo_names[] = {
         "xmr",
         "\0"
 };
-bool opt_benchmark = false;
 bool opt_debug = true;
-bool want_stratum = true;
+bool opt_serial_debug = false;
+bool opt_stratum_debug = false;
 bool use_colors = true;
 bool opt_uart = false;
 bool opt_quiet = false;
 int opt_maxlograte = 5;
-bool opt_protocol = false;
 long opt_proxy_type;
 bool opt_redirect = true;
 bool opt_stratum_stats = false;
@@ -70,7 +69,6 @@ static unsigned int opt_fail_pause = 10;
 static int opt_time_limit = 0;
 int opt_timeout = 300;
 static enum algos opt_algo = ALGO_X11;
-int opt_priority = 0;
 long nonce_cnt=1;
 char *rpc_url;
 char *rpc_userpass;
@@ -83,7 +81,6 @@ char *opt_proxy;
 struct thr_info *thr_info;
 struct work_restart *work_restart = NULL;
 struct stratum_ctx stratum;
-double opt_diff_factor = 1.0;
 pthread_mutex_t applog_lock;
 pthread_mutex_t stats_lock;
 pthread_mutex_t rpc2_job_lock;
@@ -95,22 +92,13 @@ double *thr_hashrates;
 uint64_t global_hashrate = 0;
 double stratum_diff = 0.;
 double net_diff = 0.;
-double net_hashrate = 0.;
 // conditional mining
-bool conditional_state[MAX_CPUS] = {0};
 bool jsonrpc_2 = false;
 char rpc2_id[64] = "";
 char *rpc2_blob = NULL;
 size_t rpc2_bloblen = 0;
 uint32_t rpc2_target = 0;
 char *rpc2_job_id = NULL;
-
-
-
-double opt_max_temp = 0.0;
-double opt_max_diff = 0.0;
-double opt_max_rate = 0.0;
-
 
 static char const usage[] = "\
 Usage:  [OPTIONS]\n\
@@ -165,6 +153,8 @@ static struct option const options[] = {
         {"diff-multiplier", 1, NULL, 'm'},
         {"quiet",           0, NULL, 'q'},
         {"debug",           0, NULL, 'D'},
+        {"serial_debug",    0, NULL, 1012},
+        {"stratum_debug",   0, NULL, 1013},
         {"benchmark",       0, NULL, 1005},
         {"cputest",         0, NULL, 1006},
         {"max-temp",        1, NULL, 1060},
@@ -616,15 +606,9 @@ static void *miner_thread(void *userdata) {
                     sleep(1);
                     continue;
                 }
-                if (opt_benchmark) {
-                    char rate[32];
-                    format_hashrate((double) global_hashrate, rate);
-                    applog(LOG_NOTICE, "Benchmark: %s", rate);
-                    fprintf(stderr, "%llu\n", (long long unsigned int) global_hashrate);
-                } else {
-                    applog(LOG_NOTICE,
-                           "Mining timeout of %ds reached, exiting...", opt_time_limit);
-                }
+
+                applog(LOG_NOTICE, "Mining timeout of %ds reached, exiting...", opt_time_limit);
+
                 proper_exit(0);
             }
             if (remain < max64) max64 = remain;
@@ -640,7 +624,7 @@ static void *miner_thread(void *userdata) {
             max_nonce = (*nonceptr) + (uint32_t) max64;
 
         hashes_done = 0;
-        gettimeofday((struct timeval *) &tv_start, NULL);
+        gettimeofday(&tv_start, NULL);
 
         if (firstwork_time == 0)
             firstwork_time = time(NULL);
@@ -662,8 +646,7 @@ static void *miner_thread(void *userdata) {
         timeval_subtract(&diff, &tv_end, &tv_start);
         if (diff.tv_usec || diff.tv_sec) {
             pthread_mutex_lock(&stats_lock);
-            thr_hashrates[thr_id] =
-                    hashes_done / (diff.tv_sec + diff.tv_usec * 1e-6);
+            thr_hashrates[thr_id] = hashes_done / (diff.tv_sec + diff.tv_usec * 1e-6);
             pthread_mutex_unlock(&stats_lock);
         }
         if (!opt_quiet && (time(NULL) - tm_rate_log) > opt_maxlograte) {
@@ -690,20 +673,20 @@ static void *uart_miner_thread(void *userdata) {
     while (!g_work.targetdiff);
     need_restart = 0;
     struct thr_info *mythr = (struct thr_info *) userdata;
+    struct timeval tv_start, tv_now, diff;
     struct work zero_work;
     work_free(&zero_work);
     struct work work;
-    struct work upload_work;
-    char* session_id = malloc(strlen(stratum.session_id));
-    strcpy(session_id, stratum.session_id);
     memset(&work, 0, sizeof(work));
     board_t *board = malloc(sizeof(board_t));
+    board->restart_flag = &work_restart[0].restart;
     board_init_chip_array(board);
     uint8_t need_regen = 0;
-    size_t xnonce2_len = g_work.xnonce2_len;
-    uint8_t *work_id = malloc(16 * xnonce2_len);
-    memset(work_id, 0x00, 16 * xnonce2_len);
-    int work_id_index = 0;
+//    int work_id_index = 0;
+    struct work work_list[16];
+    int work_index = 0;
+    work_restart[0].restart = 0;
+    gettimeofday(&tv_start, NULL);
     while (1) {
         pthread_mutex_lock(&g_work_lock);
         if (work.targetdiff != g_work.targetdiff) {
@@ -723,9 +706,9 @@ static void *uart_miner_thread(void *userdata) {
 //		data_in has changed
         if (memcmp(work.data, g_work.data, 76)) {
 //			  job_id has changed, need to clear fifo.
-            if (work.job_id==NULL||strcmp(work.job_id,g_work.job_id)||strcmp(session_id, stratum.session_id)){
+            if (*board->restart_flag) {
                 board_flush_fifo(board, 0);
-                strcpy(session_id, stratum.session_id); 
+                *board->restart_flag = 0;
                 applog(LOG_DEBUG, "job id: %s came, flushed FIFO", g_work.job_id);
             }
 //            copy work from g_work to work
@@ -736,30 +719,34 @@ static void *uart_miner_thread(void *userdata) {
                 le32enc(board->chip_array[0].data_in + 4 * i, work.data[18 - i]);
             board_set_data_in(board, 0);
 //            WORK_ID_REG
-            memcpy(work_id + (work_id_index * xnonce2_len), work.xnonce2, xnonce2_len);
-            memcpy(board->chip_array[0].work_id, &work_id_index, 1);
-            char* xnonce2str = abin2hex(work.xnonce2, xnonce2_len);
-            applog(LOG_DEBUG, "work_id_index: %d, xnonce2: %s",work_id_index, xnonce2str);
-            work_id_index = (work_id_index + 1) % 16;
+            work_copy(work_list + work_index, &work);
+            memcpy(board->chip_array[0].work_id, &work_index, 1);
+            applog(LOG_DEBUG, "work_id_index: %d, xnonce2: %s", work_index, work.xnonce2);
+            work_index = (work_index + 1) % 16;
+
             board_set_workid(board, 0);
             board_start_x11(board, 0);
         }
         pthread_mutex_unlock(&g_work_lock);
 
-//          make sure nonce is not full
-        for (uint8_t j = 1; j <= board->chip_nums; ++j)
-            need_regen = (uint8_t)(need_regen || board_get_fifo(board, j));
-
         if (board_wait_for_nonce(board)) {
             nonce_cnt++;
-            work_free(&upload_work);
-            work_copy(&upload_work, &work);
-            memcpy(upload_work.data + 19, board->nonce, 4);
-            memcpy(upload_work.xnonce2, work_id + (*board->work_id * xnonce2_len), xnonce2_len);
-            if (!submit_work(mythr, &upload_work)) {
+            memcpy(work_list[*board->work_id].data + 19, board->nonce, 4);
+            if (!submit_work(mythr, &work_list[*board->work_id])) {
                 break;
             }
         }
+
+//          make sure nonce is not full
+        gettimeofday(&tv_now, NULL);
+        timeval_subtract(&diff, &tv_now, &tv_start);
+        if (diff.tv_sec > 1) {
+            for (uint8_t j = 1; j <= board->chip_nums; ++j) {
+                need_regen = (uint8_t) (need_regen || board_get_fifo(board, j));
+            }
+            gettimeofday(&tv_start, NULL);
+        }
+
         if (unlikely(need_restart))
             goto start_miner;
     }
@@ -831,7 +818,6 @@ static void *stratum_thread(void *userdata) {
             pthread_mutex_lock(&g_work_lock);
             g_work_time = 0;
             pthread_mutex_unlock(&g_work_lock);
-
             if (!stratum_connect(&stratum, stratum.url)
                 || !stratum_subscribe(&stratum)
                 || !stratum_authorize(&stratum, rpc_user, rpc_pass)) {
@@ -841,8 +827,7 @@ static void *stratum_thread(void *userdata) {
                     tq_push(thr_info[1].q, NULL);
                     goto out;
                 }
-                if (!opt_benchmark)
-                    applog(LOG_ERR, "...retry after %d seconds", opt_fail_pause);
+                applog(LOG_ERR, "...retry after %d seconds", opt_fail_pause);
                 sleep(opt_fail_pause);
             }
 
@@ -938,8 +923,6 @@ void parse_arg(int key, char *arg) {
                     char *nf = strstr(arg, ":");
                     *nf = '\0';
                 }
-            }
-            if (i == ALGO_COUNT) {
                 show_usage_and_exit(1);
             }
             break;
@@ -1083,20 +1066,6 @@ void parse_arg(int key, char *arg) {
                 show_usage_and_exit(1);
             opt_timeout = v;
             break;
-//{ "diff-factor", 1, NULL, 'f' },
-        case 'f':
-            d = atof(arg);
-            if (d == 0.)    /* --diff-factor */
-                show_usage_and_exit(1);
-            opt_diff_factor = d;
-            break;
-//{ "diff-multiplier", 1, NULL, 'm' },
-        case 'm':
-            d = atof(arg);
-            if (d == 0.)    /* --diff-multiplier */
-                show_usage_and_exit(1);
-            opt_diff_factor = 1.0 / d;
-            break;
 //{ "quiet", 0, NULL, 'q' },
         case 'q':
             opt_quiet = true;
@@ -1105,30 +1074,13 @@ void parse_arg(int key, char *arg) {
         case 'D':
             opt_debug = true;
             break;
-//{ "cputest", 0, NULL, 1006 },
-        case 1006:
-            print_hash_tests();
-            exit(0);
-//{ "max-temp", 1, NULL, 1060 },
-        case 1060: // max-temp
-            d = atof(arg);
-            opt_max_temp = d;
+//{"serial_debug",    0, NULL, 1012},
+        case 1012:
+            opt_serial_debug = true;
             break;
-//{ "max-rate", 1, NULL, 1062},
-        case 1062: // max-rate
-            d = atof(arg);
-            p = strstr(arg, "K");
-            if (p) d *= 1e3;
-            p = strstr(arg, "M");
-            if (p) d *= 1e6;
-            p = strstr(arg, "G");
-            if (p) d *= 1e9;
-            opt_max_rate = d;
-            break;
-//{ "max-diff", 1, NULL, 1061 },
-        case 1061: // max-diff
-            d = atof(arg);
-            opt_max_diff = d;
+//{"stratum_debug",   0, NULL, 1013},
+        case 1013:
+            opt_stratum_debug = true;
             break;
 //{ "config", 1, NULL, 'c' },
         case 'c': {
@@ -1197,14 +1149,9 @@ static void parse_cmdline(int argc, char *argv[]) {
     int key;
 
     while (1) {
-#if HAVE_GETOPT_LONG
         key = getopt_long(argc, argv, short_options, options, NULL);
-#else
-        key = getopt(argc, argv, short_options);
-#endif
         if (key < 0)
             break;
-
         parse_arg(key, optarg);
     }
     if (optind < argc) {
@@ -1250,8 +1197,8 @@ int main(int argc, char *argv[]) {
     // try default config file in binary folder
     char defconfig[PATH_MAX] = {0};
     get_defconfig_path(defconfig, PATH_MAX, argv[0]);
-    applog(LOG_INFO, "Using config %s", defconfig);
     parse_arg('c', defconfig);
+    applog(LOG_INFO, "Using config %s", defconfig);
     parse_cmdline(argc, argv);
     opt_uart = cmd_speed && nonce_speed;
     if (opt_algo == ALGO_XMR)
@@ -1267,7 +1214,7 @@ int main(int argc, char *argv[]) {
         pthread_mutex_init(&rpc2_login_lock, NULL);
     }
 
-    flags = !opt_benchmark && strncmp(rpc_url, "https:", 6) ? (CURL_GLOBAL_ALL & ~CURL_GLOBAL_SSL) : CURL_GLOBAL_ALL;
+    flags = strncmp(rpc_url, "https:", 6) ? (CURL_GLOBAL_ALL & ~CURL_GLOBAL_SSL) : CURL_GLOBAL_ALL;
 
     if (curl_global_init(flags)) {
         applog(LOG_ERR, "CURL initialization failed");

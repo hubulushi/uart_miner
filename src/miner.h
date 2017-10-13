@@ -296,6 +296,7 @@ typedef struct board_info{
     uint8_t nonce[4];
     uint8_t work_id[4];
 	uint8_t current_chip;
+    volatile uint8_t *restart_flag;
 } board_t;
 
 
@@ -334,38 +335,24 @@ struct work_restart {
 };
 
 extern bool opt_debug;
-extern bool opt_benchmark;
+extern bool opt_serial_debug;
+extern bool opt_stratum_debug;
 extern bool opt_protocol;
-extern bool opt_showdiff;
 extern bool opt_quiet;
 extern bool opt_redirect;
-extern int opt_priority;
 extern int opt_timeout;
-extern bool want_longpoll;
-extern bool have_longpoll;
-extern bool have_gbt;
-extern bool allow_getwork;
-extern bool want_stratum;
-extern bool have_stratum;
 extern bool opt_stratum_stats;
 extern char *opt_cert;
 extern char *opt_proxy;
 extern long opt_proxy_type;
-extern bool use_syslog;
 extern bool use_colors;
 extern pthread_mutex_t applog_lock;
 extern struct thr_info *thr_info;
-extern int longpoll_thr_id;
-extern int api_thr_id;
-extern int opt_n_threads;
-extern int num_cpus;
 extern struct work_restart *work_restart;
-extern uint32_t opt_work_size;
 extern double *thr_hashrates;
 extern uint64_t global_hashrate;
 extern double stratum_diff;
 extern double net_diff;
-extern double net_hashrate;
 
 #define JSON_RPC_LONGPOLL	(1 << 0)
 #define JSON_RPC_QUIET_404	(1 << 1)
@@ -532,7 +519,6 @@ void applog_hex(void *data, int len);
 void applog_hash(void *hash);
 void applog_hash64(void *hash);
 void format_hashrate(double hashrate, char *output);
-void print_hash_tests(void);
 
 void sha256d(unsigned char *hash, const unsigned char *data, int len);
 void x11hash(void *output, const void *input);

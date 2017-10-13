@@ -20,8 +20,11 @@
 #include <sys/select.h>
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <time.h>
 
 #include "serial.h"
+#include "miner.h"
+
 
 static int _serial_error(struct serial_handle *serial, int code, int c_errno, const char *fmt, ...) {
     va_list ap;
@@ -222,8 +225,8 @@ int serial_read(serial_t *serial, uint8_t *buf, size_t len, int timeout_ms) {
     size_t bytes_left, bytes_read;
     ssize_t ret;
     fd_set rfds;
-    struct timeval tv_timeout;
-
+    struct timeval tv_timeout, tmp_timeout;
+//    struct timeval first_byte_time,current_time;
     tv_timeout.tv_sec = timeout_ms / 1000;
     tv_timeout.tv_usec = (timeout_ms % 1000) * 1000;
 
@@ -234,7 +237,7 @@ int serial_read(serial_t *serial, uint8_t *buf, size_t len, int timeout_ms) {
         if (timeout_ms >= 0) {
             FD_ZERO(&rfds);
             FD_SET(serial->fd, &rfds);
-            struct timeval tmp_timeout = tv_timeout;
+            tmp_timeout = tv_timeout;
             if ((ret = select(serial->fd + 1, &rfds, NULL, NULL, &tmp_timeout)) < 0)
                 return _serial_error(serial, SERIAL_ERROR_IO, errno, "select() on serial port");
 
@@ -243,6 +246,8 @@ int serial_read(serial_t *serial, uint8_t *buf, size_t len, int timeout_ms) {
                 break;
         }
 
+//        if (bytes_read == 0) gettimeofday(&first_byte_time,NULL);
+
         if ((ret = read(serial->fd, buf + bytes_read, bytes_left)) < 0)
             return _serial_error(serial, SERIAL_ERROR_IO, errno, "Reading serial port");
 
@@ -250,6 +255,13 @@ int serial_read(serial_t *serial, uint8_t *buf, size_t len, int timeout_ms) {
         bytes_left -= ret;
     } while (bytes_left > 0);
 
+
+//    if (!bytes_read)
+//    {
+//        gettimeofday(&current_time,NULL);
+//        applog(LOG_SERIAL,"[SERIAL_VERBS] Reading serial port part of data(byte_left=%d),timeout=[%d.%d] start_time=[%d.%d] current_time=[%d.%d]",
+//               bytes_left,tmp_timeout.tv_sec,tmp_timeout.tv_usec,first_byte_time.tv_sec,first_byte_time.tv_usec,current_time.tv_sec,current_time.tv_usec);
+//    }
     return bytes_read;
 }
 
@@ -547,9 +559,9 @@ int serial_tostring(serial_t *serial, char *str, size_t len) {
     if (tcgetattr(serial->fd, &termios_settings) < 0)
         return snprintf(str, len, "Serial (baudrate=?, databits=?, parity=?, stopbits=?, xonxoff=?, rtscts=?)");
 
-     baudrate = _serial_bits_to_baudrate(cfgetospeed(&termios_settings));
+    baudrate = _serial_bits_to_baudrate(cfgetospeed(&termios_settings));
 
-     switch (termios_settings.c_cflag & CSIZE) {
+    switch (termios_settings.c_cflag & CSIZE) {
         case CS5: databits_str = "5"; break;
         case CS6: databits_str = "6"; break;
         case CS7: databits_str = "7"; break;

@@ -97,9 +97,11 @@ void applog(int prio, const char *fmt, ...) {
             color = CL_WHT;
             break;
         case LOG_SERIAL:
+            if (!opt_serial_debug) return;
             color = CL_MAG;
             break;
         case LOG_STRATUM:
+            if (!opt_stratum_debug) return;
             color = CL_BLU;
     }
     if (!use_colors)
@@ -410,8 +412,6 @@ json_t *json_rpc_call(CURL *curl, const char *url,
 
     /* it is assumed that 'curl' is freshly [re]initialized at this pt */
 
-    if (opt_protocol)
-        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
     curl_easy_setopt(curl, CURLOPT_URL, url);
     if (opt_cert)
         curl_easy_setopt(curl, CURLOPT_CAINFO, opt_cert);
@@ -476,8 +476,7 @@ json_t *json_rpc_call(CURL *curl, const char *url,
     }
 
     /* If X-Stratum was found, activate Stratum */
-    if (want_stratum && hi.stratum_url &&
-        !strncasecmp(hi.stratum_url, "stratum+tcp://", 14)) {
+    if (hi.stratum_url && !strncasecmp(hi.stratum_url, "stratum+tcp://", 14)) {
         tq_push(thr_info[2].q, hi.stratum_url);
         hi.stratum_url = NULL;
     }
@@ -1062,8 +1061,6 @@ bool stratum_connect(struct stratum_ctx *sctx, const char *url) {
     sctx->curl_url = (char *) malloc(strlen(url));
     sprintf(sctx->curl_url, "http%s", strstr(url, "://"));
 
-    if (opt_protocol)
-        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
     curl_easy_setopt(curl, CURLOPT_URL, sctx->curl_url);
     curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30);
@@ -1585,7 +1582,6 @@ static bool stratum_benchdata(json_t *result, json_t *params, int thr_id) {
     json_object_set_new(val, "memf", json_integer(0));
     json_object_set_new(val, "power", json_integer(0));
     json_object_set_new(val, "khashes", json_real((double) global_hashrate / 1000.0));
-    json_object_set_new(val, "intensity", json_real(opt_priority));
     json_object_set_new(val, "throughput", json_integer(1));
     json_object_set_new(val, "client", json_string(PACKAGE_NAME "/" PACKAGE_VERSION));
     json_object_set_new(val, "os", json_string(os));
@@ -1955,25 +1951,6 @@ void applog_hash64(void *hash) {
 #define printpfx(n, h) \
     printf("%s%11s%s: %s\n", CL_CYN, n, CL_N, format_hash(s, (uint8_t*) h))
 
-void print_hash_tests(void) {
-    uchar *scratchbuf = NULL;
-    char hash[128], s[80];
-    char buf[192] = {0};
-
-    scratchbuf = (uchar *) calloc(128, 1024);
-
-    printf(CL_WHT "CPU HASH ON EMPTY BUFFER RESULTS:" CL_N "\n\n");
-
-    memset(buf, 0, sizeof(buf));
-    //buf[0] = 1; buf[64] = 2; // for endian tests
-
-    x11hash(&hash[0], &buf[0]);
-    printpfx("x11", hash);
-
-    printf("\n");
-
-    free(scratchbuf);
-}
 
 // -------------------- RPC 2.0 (XMR/AEON) -------------------------
 
