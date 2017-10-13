@@ -209,7 +209,7 @@ uint8_t board_wait_for_nonce(board_t *board){
     uint8_t nonce_data[7];
     uint32_t nonce;
     uint8_t check_sum=0x00;
-    if(serial_read(&board->nonce_serial, nonce_data, 7, 1000)>0){
+    if (serial_read(&board->nonce_serial, nonce_data, 7, 2000) > 0) {
         for (int i = 1; i < 7; ++i)
             check_sum^=nonce_data[i];
         if (check_sum != nonce_data[0])

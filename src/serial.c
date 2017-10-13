@@ -234,8 +234,8 @@ int serial_read(serial_t *serial, uint8_t *buf, size_t len, int timeout_ms) {
         if (timeout_ms >= 0) {
             FD_ZERO(&rfds);
             FD_SET(serial->fd, &rfds);
-
-            if ((ret = select(serial->fd+1, &rfds, NULL, NULL, &tv_timeout)) < 0)
+            struct timeval tmp_timeout = tv_timeout;
+            if ((ret = select(serial->fd + 1, &rfds, NULL, NULL, &tmp_timeout)) < 0)
                 return _serial_error(serial, SERIAL_ERROR_IO, errno, "select() on serial port");
 
             /* Timeout / nothing more to read */
