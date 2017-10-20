@@ -3,6 +3,7 @@
  * Copyright 2012-2014 pooler
  * Copyright 2014 Lucas Jones
  * Copyright 2014 Tanguy Pruvot
+ * Copyright 2017 Sequencer
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -43,17 +44,6 @@ struct workio_cmd {
     } u;
 };
 
-enum algos {
-    ALGO_X11,         /* X11 */
-    ALGO_XMR,
-    ALGO_COUNT
-};
-
-static const char *algo_names[] = {
-        "x11",
-        "xmr",
-        "\0"
-};
 bool opt_debug = true;
 bool opt_serial_debug = false;
 bool opt_stratum_debug = false;
@@ -68,7 +58,7 @@ static int opt_retries = -1;
 static unsigned int opt_fail_pause = 10;
 static int opt_time_limit = 0;
 int opt_timeout = 300;
-static enum algos opt_algo = ALGO_X11;
+enum algos opt_algo;
 long nonce_cnt=1;
 char *rpc_url;
 char *rpc_userpass;
@@ -302,7 +292,10 @@ static bool submit_upstream_work(CURL *curl, struct work *work) {
         uchar hash[32];
 
         bin2hex(noncestr, (const unsigned char *) work->data + 39, 4);
-        cryptonight_hash(hash, work->data, 76);
+        if (opt_uart)
+            memcpy(hash, work->hash, 32);
+        else
+            cryptonight_hash(hash, work->data, 76);
         char *hashhex = abin2hex(hash, 32);
         snprintf(s, JSON_BUF_LEN,
                  "{\"method\": \"submit\", \"params\": {\"id\": \"%s\", \"job_id\": \"%s\", \"nonce\": \"%s\", \"result\": \"%s\"}, \"id\":4}\r\n",
@@ -563,9 +556,8 @@ static void *miner_thread(void *userdata) {
         int wkcmp_sz = nonce_oft;
         int rc = 0;
 
-        if (jsonrpc_2) {
+        if (jsonrpc_2)
             wkcmp_sz = nonce_oft = 39;
-        }
 
         uint32_t *nonceptr = (uint32_t *) (((char *) work.data) + nonce_oft);
         while (!jsonrpc_2 && time(NULL) >= g_work_time + 120)
@@ -670,7 +662,6 @@ static void *miner_thread(void *userdata) {
 
 static void *uart_miner_thread(void *userdata) {
     start_miner:
-    while (!g_work.targetdiff);
     need_restart = 0;
     struct thr_info *mythr = (struct thr_info *) userdata;
     struct timeval tv_start, tv_now, diff;
@@ -681,30 +672,28 @@ static void *uart_miner_thread(void *userdata) {
     board_t *board = malloc(sizeof(board_t));
     board->restart_flag = &work_restart[0].restart;
     board_init_chip_array(board);
-    uint8_t need_regen = 0;
-//    int work_id_index = 0;
     struct work work_list[16];
     int work_index = 0;
     work_restart[0].restart = 0;
     gettimeofday(&tv_start, NULL);
+    bool regen_work = false;
     while (1) {
+        while (!jsonrpc_2 && time(NULL) >= g_work_time + 120)
+            sleep(1);
         pthread_mutex_lock(&g_work_lock);
-        if (work.targetdiff != g_work.targetdiff) {
-//        g_work diff has changed.
-            work.targetdiff = g_work.targetdiff;
-            work_set_target(&work, work.targetdiff);
-            le32enc(board->chip_array[0].target, work.target[6]);
-            le32enc(board->chip_array[0].target + 4, work.target[7]);
-            board_set_target(board);
-        }
-//
-        if (need_regen) {
+        regen_work = regen_work || memcmp(&work.data[0], &g_work.data[0], 76);
+        if (regen_work) {
             stratum_gen_work(&stratum, &g_work);
-            need_regen = 0;
+            if (jsonrpc_2 ? memcmp(work.target, g_work.target, 8) : (work.targetdiff != g_work.targetdiff)) {
+//        g_work diff has changed.
+                if (!jsonrpc_2)
+                    work.targetdiff = g_work.targetdiff;
+                le32enc(board->chip_array[0].target, g_work.target[6]);
+                le32enc(board->chip_array[0].target + 4, g_work.target[7]);
+            board_set_target(board);
         }
 //    verjion 4*1B   prev_hash 4*8B   merkle_root 4*8B   ntime 4*1B   nbits 4*1B
 //		data_in has changed
-        if (memcmp(work.data, g_work.data, 76)) {
 //			  job_id has changed, need to clear fifo.
             if (*board->restart_flag) {
                 board_flush_fifo(board, 0);
@@ -719,20 +708,29 @@ static void *uart_miner_thread(void *userdata) {
                 le32enc(board->chip_array[0].data_in + 4 * i, work.data[18 - i]);
             board_set_data_in(board, 0);
 //            WORK_ID_REG
-            work_copy(work_list + work_index, &work);
-            memcpy(board->chip_array[0].work_id, &work_index, 1);
-            applog(LOG_DEBUG, "work_id_index: %d, xnonce2: %s", work_index, work.xnonce2);
-            work_index = (work_index + 1) % 16;
 
+            if (jsonrpc_2) {
+                work_index = 0;
+            } else {
+                work_copy(work_list + work_index, &work);
+                memcpy(board->chip_array[0].work_id, &work_index, 1);
+                applog(LOG_DEBUG, "work_id_index: %d, xnonce2: %s", work_index, work.xnonce2);
+                work_index = (work_index + 1) % 16;
+            }
             board_set_workid(board, 0);
-            board_start_x11(board, 0);
+            board_start(board, 0);
+            regen_work = 0;
         }
         pthread_mutex_unlock(&g_work_lock);
 
         if (board_wait_for_nonce(board)) {
             nonce_cnt++;
-            memcpy(work_list[*board->work_id].data + 19, board->nonce, 4);
-            if (!submit_work(mythr, &work_list[*board->work_id])) {
+//            TODO: data align
+            struct work upload_work = jsonrpc_2 ? work : work_list[*board->work_id];
+            memcpy(jsonrpc_2 ? (((char *) upload_work.data) + 39) : upload_work.data + 19, board->nonce, 4);
+            if (jsonrpc_2)
+                memcpy(upload_work.hash, board->hash, 32);
+            if (!submit_work(mythr, &upload_work)) {
                 break;
             }
         }
@@ -740,9 +738,9 @@ static void *uart_miner_thread(void *userdata) {
 //          make sure nonce is not full
         gettimeofday(&tv_now, NULL);
         timeval_subtract(&diff, &tv_now, &tv_start);
-        if (diff.tv_sec > 1) {
+        if (!jsonrpc_2 && diff.tv_sec > 1) {
             for (uint8_t j = 1; j <= board->chip_nums; ++j) {
-                need_regen = (uint8_t) (need_regen || board_get_fifo(board, j));
+                regen_work = (uint8_t) (regen_work || board_get_fifo(board, j));
             }
             gettimeofday(&tv_start, NULL);
         }
@@ -818,10 +816,12 @@ static void *stratum_thread(void *userdata) {
             pthread_mutex_lock(&g_work_lock);
             g_work_time = 0;
             pthread_mutex_unlock(&g_work_lock);
+            restart_threads();
             if (!stratum_connect(&stratum, stratum.url)
                 || !stratum_subscribe(&stratum)
                 || !stratum_authorize(&stratum, rpc_user, rpc_pass)) {
                 stratum_disconnect(&stratum);
+
                 if (opt_retries >= 0 && ++failures > opt_retries) {
                     applog(LOG_ERR, "...terminating workio thread");
                     tq_push(thr_info[1].q, NULL);
@@ -870,6 +870,7 @@ static void *stratum_thread(void *userdata) {
         if (!s) {
             stratum_disconnect(&stratum);
             applog(LOG_ERR, "Stratum connection interrupted");
+            restart_threads();
             continue;
         }
         if (!stratum_handle_method(&stratum, s))

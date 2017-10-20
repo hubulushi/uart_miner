@@ -222,7 +222,6 @@ int scanhash_cryptonight(int thr_id, struct work *work, uint32_t max_nonce, uint
 
 void cryptonight_hash(void *output, const void *input, int len);
 
-
 typedef enum reg{
     CHIP_ID_REG,            //1				0
     PLL_REG,                //4				1
@@ -296,6 +295,7 @@ typedef struct board_info{
     uint8_t nonce[4];
     uint8_t work_id[4];
 	uint8_t current_chip;
+    uint8_t hash[32];
     volatile uint8_t *restart_flag;
 } board_t;
 
@@ -353,6 +353,18 @@ extern double *thr_hashrates;
 extern uint64_t global_hashrate;
 extern double stratum_diff;
 extern double net_diff;
+enum algos {
+    ALGO_X11,         /* X11 */
+    ALGO_XMR,
+    ALGO_COUNT
+};
+
+static const char *algo_names[] = {
+        "x11",
+        "xmr",
+        "\0"
+};
+extern enum algos opt_algo;
 
 #define JSON_RPC_LONGPOLL	(1 << 0)
 #define JSON_RPC_QUIET_404	(1 << 1)
@@ -410,7 +422,6 @@ uint8_t target_to_zeros(uint32_t* target);
 double hash_target_ratio(uint32_t* hash, uint32_t* target);
 void work_set_target_ratio(struct work* work, uint32_t* hash);
 
-void get_currentalgo(char* buf, int sz);
 bool has_aes_ni(void);
 void cpu_bestfeature(char *outbuf, size_t maxsz);
 void cpu_getname(char *outbuf, size_t maxsz);
@@ -429,7 +440,7 @@ struct work {
 	int height;
 	char *txs;
 	char *workid;
-
+    uint8_t hash[32];
 	char *job_id;
 	size_t xnonce2_len;
 	unsigned char *xnonce2;

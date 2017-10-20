@@ -4,6 +4,7 @@ uint8_t reg_size[24]= {1, 4, 2, 2, 76, 64, 2, 4, 4, 1, 1, 8, 4, 32, 32, 4, 4, 1,
 extern long nonce_cnt;
 extern char *cmd_path, *nonce_path;
 extern uint32_t cmd_speed, nonce_speed;
+
 uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
     // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
     if (board->current_chip == chip_id)
@@ -142,9 +143,10 @@ uint8_t board_init_chip_array(board_t *board){
     }
 //    make sure next choose can choose all chip
     board->current_chip = 0xFF;
-    board_reset_x11(board,0);
+    board_reset(board, 0);
     uint8_t cycle_reg[1] = {0x4E};
-    board_write_reg(board, 0, CYCLES_REG, cycle_reg);
+    if (opt_algo == ALGO_X11)
+        board_write_reg(board, 0, CYCLES_REG, cycle_reg);
     board_assign_nonce(board);
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
@@ -175,6 +177,7 @@ uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
     }
 }
 uint8_t board_set_target(board_t *board){
+    applog(LOG_DEBUG, "writing target to board.");
     board_write_reg(board, 0, TARGET_REG, board->chip_array->target);
     return 0;
 }
@@ -186,7 +189,8 @@ uint8_t board_set_workid(board_t *board, uint8_t chip_id){
     board_write_reg(board, chip_id, WORK_ID_REG, board->chip_array[chip_id].work_id);
     return 0;
 }
-uint8_t board_reset_x11(board_t *board, uint8_t chip_id){
+
+uint8_t board_reset(board_t *board, uint8_t chip_id) {
 //    read firstly, use "and" to START bit to combine.
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
@@ -196,7 +200,8 @@ uint8_t board_reset_x11(board_t *board, uint8_t chip_id){
     uint8_t reset_cmd[2] = {0x90, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
 }
-uint8_t board_start_x11(board_t *board, uint8_t chip_id){
+
+uint8_t board_start(board_t *board, uint8_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
     //             1      1       0       1       0       0       0       0
@@ -206,22 +211,34 @@ uint8_t board_start_x11(board_t *board, uint8_t chip_id){
     board_write_reg(board, chip_id, CTRL_REG, start_cmd);
 }
 uint8_t board_wait_for_nonce(board_t *board){
-    uint8_t nonce_data[7];
-    uint32_t nonce;
+    uint8_t buf_len = (uint8_t) (jsonrpc_2 ? 39 : 7);
+    uint8_t serial_data[7];
     uint8_t check_sum=0x00;
-    if (serial_read(&board->nonce_serial, nonce_data, 7, 100) > 0) {
-        for (int i = 1; i < 7; ++i)
-            check_sum^=nonce_data[i];
-        if (check_sum != nonce_data[0])
-            applog(LOG_WARNING, "[SERIAL_NONCE] check sum not match.");
-        memcpy(board->work_id, nonce_data, 1);
-        nonce = le32dec(nonce_data+2);
-        memcpy(board->nonce, &nonce, 4);
-        char* nonce_data_str = abin2hex(nonce_data,7);
-        char* nonce_hex = abin2hex(board->nonce, 4);
-        char* work_id_hex = abin2hex(board->work_id, 1);
-        applog(LOG_SERIAL, "[SERIAL_NONCE] nonce_cnt: %d, data: %s, nonce: %s, work_id: %s", nonce_cnt, nonce_data_str, nonce_hex, work_id_hex);
-        return 1;
+    if (serial_read(&board->nonce_serial, serial_data, buf_len, 100) > 0) {
+        for (int i = 0; i < buf_len - 1; ++i)
+            check_sum ^= serial_data[i];
+        if (check_sum != serial_data[buf_len - 1])
+            applog(LOG_WARNING, "[SERIAL_NONCE] check sum: %02x not match %02x.", check_sum, serial_data[buf_len - 1]);
+        if (jsonrpc_2) {
+            memcpy(board->work_id, serial_data, 1);
+            memcpy(board->nonce, serial_data + 2, 4);
+            memcpy(board->hash, serial_data + 6, 32);
+            char *nonce_data_hex = abin2hex(serial_data, buf_len);
+            char *work_id_hex = abin2hex(board->work_id, 1);
+            char *nonce_hex = abin2hex(board->nonce, 4);
+            char *hash_hex = abin2hex(board->hash, 32);
+            applog(LOG_SERIAL, "[SERIAL_NONCE] nonce_cnt: %d, data: %s, work_id: %s, nonce: %s, hex: %s", nonce_cnt, nonce_data_hex, work_id_hex, nonce_hex, hash_hex);
+            return 1;
+        } else {
+            memcpy(board->work_id, serial_data, 1);
+            memcpy(board->nonce, serial_data + 2, 4);
+            char *nonce_data_hex = abin2hex(serial_data, 7);
+            char *work_id_hex = abin2hex(board->work_id, 1);
+            char *nonce_hex = abin2hex(board->nonce, 4);
+//            nonce_cnt: 97605, data: 0d 16 5f042900 69, nonce: 5f042900, work_id: 0d
+            applog(LOG_SERIAL, "[SERIAL_NONCE] nonce_cnt: %d, data: %s, work_id: %s, nonce: %s", nonce_cnt, nonce_data_hex, work_id_hex, nonce_hex);
+            return 1;
+        }
     }
     return 0;
 }
