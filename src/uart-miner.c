@@ -40,7 +40,7 @@ struct workio_cmd {
     enum workio_commands cmd;
     struct thr_info *thr;
     union {
-        struct work *work;
+        work_t *work;
     } u;
 };
 
@@ -155,7 +155,7 @@ static struct option const options[] = {
         {0,                 0, 0,    0}
 };
 
-static struct work g_work = {{0}};
+static work_t g_work = {{0}};
 static time_t g_work_time = 0;
 static pthread_mutex_t g_work_lock;
 static bool submit_old = false;
@@ -164,27 +164,6 @@ static void workio_cmd_free(struct workio_cmd *wc);
 
 void proper_exit(int reason) {
     exit(reason);
-}
-
-static inline void work_free(struct work *w) {
-    if (w->txs) free(w->txs);
-    if (w->workid) free(w->workid);
-    if (w->job_id) free(w->job_id);
-    if (w->xnonce2) free(w->xnonce2);
-}
-
-static inline void work_copy(struct work *dest, const struct work *src) {
-    memcpy(dest, src, sizeof(struct work));
-    if (src->txs)
-        dest->txs = strdup(src->txs);
-    if (src->workid)
-        dest->workid = strdup(src->workid);
-    if (src->job_id)
-        dest->job_id = strdup(src->job_id);
-    if (src->xnonce2) {
-        dest->xnonce2 = (uchar *) malloc(src->xnonce2_len);
-        memcpy(dest->xnonce2, src->xnonce2, src->xnonce2_len);
-    }
 }
 
 bool rpc2_stratum_job(struct stratum_ctx *sctx, json_t *params) {
@@ -250,7 +229,7 @@ bool rpc2_login(CURL *curl) {
 
 
 /* compute nbits to get the network diff */
-static void calc_network_diff(struct work *work) {
+static void calc_network_diff(work_t *work) {
     uint32_t nbits = swab32(work->data[18]);
     uint32_t bits = (nbits & 0xffffff);
     int16_t shift = (swab32(nbits) & 0xff); // 0x1c = 28
@@ -273,7 +252,7 @@ static int share_result(int result, const char *reason) {
     return 1;
 }
 
-static bool submit_upstream_work(CURL *curl, struct work *work) {
+static bool submit_upstream_work(CURL *curl, work_t *work) {
     json_t *val, *res, *reason;
     char s[JSON_BUF_LEN];
     int i;
@@ -288,12 +267,15 @@ static bool submit_upstream_work(CURL *curl, struct work *work) {
 
     uint32_t ntime, nonce;
     char ntimestr[9], noncestr[9];
+    uchar hash[32], board_hash[32];
     if (jsonrpc_2) {
-        uchar hash[32];
 
         bin2hex(noncestr, (const unsigned char *) work->data + 39, 4);
-        if (opt_uart)
-            memcpy(hash, work->hash, 32);
+        if (opt_uart) {
+            cryptonight_hash(hash, work->data, 76);
+            memcpy(board_hash, work->hash, 32);
+            applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(hash, 32), abin2hex(board_hash, 32));
+        }
         else
             cryptonight_hash(hash, work->data, 76);
         char *hashhex = abin2hex(hash, 32);
@@ -365,10 +347,10 @@ static void workio_cmd_free(struct workio_cmd *wc) {
 }
 
 static bool workio_get_work(struct workio_cmd *wc, CURL *curl) {
-    struct work *ret_work;
+    work_t *ret_work;
     int failures = 0;
 
-    ret_work = (struct work *) calloc(1, sizeof(*ret_work));
+    ret_work = (work_t *) calloc(1, sizeof(*ret_work));
     if (!ret_work)
         return false;
 
@@ -450,7 +432,7 @@ static void *workio_thread(void *userdata) {
     return NULL;
 }
 
-static bool submit_work(struct thr_info *thr, const struct work *work_in) {
+static bool submit_work(struct thr_info *thr, const work_t *work_in) {
     struct workio_cmd *wc;
 
     /* fill out work request message */
@@ -458,7 +440,7 @@ static bool submit_work(struct thr_info *thr, const struct work *work_in) {
     if (!wc)
         return false;
 
-    wc->u.work = (struct work *) malloc(sizeof(*work_in));
+    wc->u.work = (work_t *) malloc(sizeof(*work_in));
     if (!wc->u.work)
         goto err_out;
 
@@ -477,7 +459,7 @@ static bool submit_work(struct thr_info *thr, const struct work *work_in) {
     return false;
 }
 
-static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work) {
+static void stratum_gen_work(struct stratum_ctx *sctx, work_t *work) {
     uchar merkle_root[64] = {0};
     int i, headersize = 0;
 
@@ -539,7 +521,7 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work) {
 static void *miner_thread(void *userdata) {
     struct thr_info *mythr = (struct thr_info *) userdata;
     int thr_id = mythr->id;
-    struct work work;
+    work_t work;
     uint32_t max_nonce;
     uint32_t end_nonce = 0xffffffffU;
     time_t tm_rate_log = 0;
@@ -661,22 +643,28 @@ static void *miner_thread(void *userdata) {
 
 
 static void *uart_miner_thread(void *userdata) {
+//    jsonrpc2 lo
     start_miner:
     need_restart = 0;
     struct thr_info *mythr = (struct thr_info *) userdata;
     struct timeval tv_start, tv_now, diff;
-    struct work zero_work;
+    work_t zero_work;
     work_free(&zero_work);
-    struct work work;
+    work_t work;
     memset(&work, 0, sizeof(work));
     board_t *board = malloc(sizeof(board_t));
     board->restart_flag = &work_restart[0].restart;
     board_init_chip_array(board);
-    struct work work_list[16];
+    work_t work_list[16];
     int work_index = 0;
     work_restart[0].restart = 0;
     gettimeofday(&tv_start, NULL);
     bool regen_work = false;
+    uint8_t nonce_offset;
+    if (jsonrpc_2)
+        nonce_offset = 39;
+    else
+        nonce_offset = 76;
     while (1) {
         while (!jsonrpc_2 && time(NULL) >= g_work_time + 120)
             sleep(1);
@@ -704,8 +692,12 @@ static void *uart_miner_thread(void *userdata) {
             work_free(&work);
             work_copy(&work, &g_work);
 //            DATA_IN_REG
-            for (int i = 0; i < 19; ++i)
-                le32enc(board->chip_array[0].data_in + 4 * i, work.data[18 - i]);
+            if (jsonrpc_2)
+                memcpy(board->chip_array[0].data_in, work.data, 76);
+            else
+                for (int i = 0; i < 19; ++i)
+                    le32enc(board->chip_array[0].data_in + 4 * i, work.data[18 - i]);
+/**/
             board_set_data_in(board, 0);
 //            WORK_ID_REG
 
@@ -725,9 +717,8 @@ static void *uart_miner_thread(void *userdata) {
 
         if (board_wait_for_nonce(board)) {
             nonce_cnt++;
-//            TODO: data align
-            struct work upload_work = jsonrpc_2 ? work : work_list[*board->work_id];
-            memcpy(jsonrpc_2 ? (((char *) upload_work.data) + 39) : upload_work.data + 19, board->nonce, 4);
+            work_t upload_work = jsonrpc_2 ? work : work_list[*board->work_id];
+            memcpy(((uint8_t *) upload_work.data + nonce_offset), board->nonce, 4);
             if (jsonrpc_2)
                 memcpy(upload_work.hash, board->hash, 32);
             if (!submit_work(mythr, &upload_work)) {
@@ -849,15 +840,15 @@ static void *stratum_thread(void *userdata) {
                 if (!opt_quiet && last_bloc_height != stratum.bloc_height) {
                     last_bloc_height = stratum.bloc_height;
                     if (net_diff > 0.)
-                        applog(LOG_BLUE, "%s block %d, diff %.3f", algo_names[opt_algo],
+                        applog(LOG_INFO, "%s block %d, diff %.3f", algo_names[opt_algo],
                                stratum.bloc_height, net_diff);
                     else
-                        applog(LOG_BLUE, "%s %s block %d", short_url, algo_names[opt_algo],
+                        applog(LOG_INFO, "%s %s block %d", short_url, algo_names[opt_algo],
                                stratum.bloc_height);
                 }
                 restart_threads();
             } else if (opt_debug && !opt_quiet) {
-                applog(LOG_BLUE, "%s asks job %lu for block %d", short_url,
+                applog(LOG_INFO, "%s asks job %lu for block %d", short_url,
                        strtoul(stratum.job.job_id, NULL, 16), stratum.bloc_height);
             }
         }
@@ -1197,8 +1188,8 @@ int main(int argc, char *argv[]) {
 
     // try default config file in binary folder
     char defconfig[PATH_MAX] = {0};
-    get_defconfig_path(defconfig, PATH_MAX, argv[0]);
     parse_arg('c', defconfig);
+    get_defconfig_path(defconfig, PATH_MAX, argv[0]);
     applog(LOG_INFO, "Using config %s", defconfig);
     parse_cmdline(argc, argv);
     opt_uart = cmd_speed && nonce_speed;

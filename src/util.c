@@ -135,7 +135,8 @@ void get_defconfig_path(char *out, size_t bufsize, char *argv0) {
     const char *sep = strstr(dir, "\\") ? "\\" : "/";
     struct stat info = {0};
     if (dir && stat(out, &info) != 0) {
-        snprintf(out, bufsize, "%s%s..%suart_miner_conf.json", dir, sep, sep);
+        snprintf(out, bufsize, "%s%suart_miner_conf.json", dir, sep);
+        applog(LOG_DEBUG, out);
     }
     if (stat(out, &info) != 0) {
         out[0] = '\0';
@@ -845,6 +846,7 @@ void diff_to_target(uint32_t *target, double diff) {
         target[k + 1] = (uint32_t) (m >> 32);
     }
 }
+
 
 // Only used by stratum pools
 void work_set_target(struct work *work, double diff) {

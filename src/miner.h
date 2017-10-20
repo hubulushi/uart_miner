@@ -346,6 +346,8 @@ extern char *opt_cert;
 extern char *opt_proxy;
 extern long opt_proxy_type;
 extern bool use_colors;
+extern bool opt_uart;
+extern char *rpc_user, *rpc_pass;
 extern pthread_mutex_t applog_lock;
 extern struct thr_info *thr_info;
 extern struct work_restart *work_restart;
@@ -445,6 +447,28 @@ struct work {
 	size_t xnonce2_len;
 	unsigned char *xnonce2;
 };
+typedef struct work work_t;
+
+static inline void work_free(work_t *w) {
+	if (w->txs) free(w->txs);
+	if (w->workid) free(w->workid);
+	if (w->job_id) free(w->job_id);
+	if (w->xnonce2) free(w->xnonce2);
+}
+
+static inline void work_copy(work_t *dest, const work_t *src) {
+	memcpy(dest, src, sizeof(work_t));
+	if (src->txs)
+		dest->txs = strdup(src->txs);
+	if (src->workid)
+		dest->workid = strdup(src->workid);
+	if (src->job_id)
+		dest->job_id = strdup(src->job_id);
+	if (src->xnonce2) {
+		dest->xnonce2 = (uchar *) malloc(src->xnonce2_len);
+		memcpy(dest->xnonce2, src->xnonce2, src->xnonce2_len);
+	}
+}
 
 struct stratum_job {
 	char *job_id;
