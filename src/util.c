@@ -11,7 +11,6 @@
 
 
 #include "miner-config.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -28,9 +27,6 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-
-#define CHECK_BIT(var, pos) ((var) & (1<<(pos)))
-
 #include <libgen.h>
 #include "miner.h"
 #include "elist.h"
@@ -74,7 +70,7 @@ void applog(int prio, const char *fmt, ...) {
     va_start(ap, fmt);
     const char *color = "";
     char *f;
-    int len;
+    size_t len;
     struct tm tm;
     time_t now = time(NULL);
 
@@ -84,6 +80,10 @@ void applog(int prio, const char *fmt, ...) {
         case LOG_ERR:
             color = CL_RED;
             break;
+        case LOG_DEBUG:
+            if (!opt_debug) return;
+            color = CL_WHT;
+            break;
         case LOG_WARNING:
             color = CL_YLW;
             break;
@@ -91,10 +91,7 @@ void applog(int prio, const char *fmt, ...) {
             color = CL_WHT;
             break;
         case LOG_INFO:
-            color = "";
-            break;
-        case LOG_DEBUG:
-            color = CL_WHT;
+            color = CL_GRY;
             break;
         case LOG_SERIAL:
             if (!opt_serial_debug) return;
@@ -103,10 +100,9 @@ void applog(int prio, const char *fmt, ...) {
         case LOG_STRATUM:
             if (!opt_stratum_debug) return;
             color = CL_BLU;
+        default:
+            break;
     }
-    if (!use_colors)
-        color = "";
-
     len = 64 + (int) strlen(fmt) + 2;
     f = (char *) malloc(len);
     sprintf(f, "[%d-%02d-%02d %02d:%02d:%02d]%s %s%s\n",
@@ -118,7 +114,7 @@ void applog(int prio, const char *fmt, ...) {
             tm.tm_sec,
             color,
             fmt,
-            use_colors ? CL_N : ""
+            CL_N
     );
     pthread_mutex_lock(&applog_lock);
     vfprintf(stdout, f, ap);    /* atomic write to stdout */
@@ -129,21 +125,21 @@ void applog(int prio, const char *fmt, ...) {
 }
 
 /* Get default config.json path (will be system specific) */
-void get_defconfig_path(char *out, size_t bufsize, char *argv0) {
+void get_defconfig_path(char *out, size_t bufsize, char *argv0, char *argv1) {
     char *cmd = strdup(argv0);
-    char *dir = dirname(cmd);
-    const char *sep = strstr(dir, "\\") ? "\\" : "/";
+    char *cmd_path = dirname(cmd);
+
+    char *conf = strdup(argv1);
     struct stat info = {0};
-    if (dir && stat(out, &info) != 0) {
-        snprintf(out, bufsize, "%s%suart_miner_conf.json", dir, sep);
-        applog(LOG_DEBUG, out);
+    if (strstr(conf, "://") || strstr(conf, "/") == conf) {
+        snprintf(out, bufsize, "%s", conf);
+    } else if (conf && stat(out, &info) != 0) {
+        snprintf(out, bufsize, "%s/%s", cmd_path, conf);
+    } else {
+        snprintf(out, bufsize, "%suart_miner.json", cmd_path);
     }
-    if (stat(out, &info) != 0) {
-        out[0] = '\0';
-        return;
-    }
+    applog(LOG_INFO, "using config: %s", out);
     out[bufsize - 1] = '\0';
-    free(cmd);
 }
 
 
@@ -351,8 +347,7 @@ static size_t resp_hdr_cb(void *ptr, size_t size, size_t nmemb, void *user_data)
 
 #if LIBCURL_VERSION_NUM >= 0x070f06
 
-static int sockopt_keepalive_cb(void *userdata, curl_socket_t fd,
-                                curlsocktype purpose) {
+static int sockopt_keepalive_cb(void *userdata, curl_socket_t fd, curlsocktype purpose) {
 #ifdef __linux
     int tcp_keepcnt = 3;
 #endif
@@ -638,102 +633,6 @@ bool hex2bin(unsigned char *p, const char *hexstr, size_t len) {
 /*	return (len == 0 && *hexstr == 0) ? true : false; */
 }
 
-int varint_encode(unsigned char *p, uint64_t n) {
-    int i;
-    if (n < 0xfd) {
-        p[0] = (uchar) n;
-        return 1;
-    }
-    if (n <= 0xffff) {
-        p[0] = 0xfd;
-        p[1] = n & 0xff;
-        p[2] = (uchar) (n >> 8);
-        return 3;
-    }
-    if (n <= 0xffffffff) {
-        p[0] = 0xfe;
-        for (i = 1; i < 5; i++) {
-            p[i] = n & 0xff;
-            n >>= 8;
-        }
-        return 5;
-    }
-    p[0] = 0xff;
-    for (i = 1; i < 9; i++) {
-        p[i] = n & 0xff;
-        n >>= 8;
-    }
-    return 9;
-}
-
-static const char b58digits[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-static bool b58dec(unsigned char *bin, size_t binsz, const char *b58) {
-    size_t i, j;
-    uint64_t t;
-    uint32_t c;
-    uint32_t *outi;
-    size_t outisz = (binsz + 3) / 4;
-    int rem = binsz % 4;
-    uint32_t remmask = 0xffffffff << (8 * rem);
-    size_t b58sz = strlen(b58);
-    bool rc = false;
-
-    outi = (uint32_t *) calloc(outisz, sizeof(*outi));
-
-    for (i = 0; i < b58sz; ++i) {
-        for (c = 0; b58digits[c] != b58[i]; c++)
-            if (!b58digits[c])
-                goto out;
-        for (j = outisz; j--;) {
-            t = (uint64_t) outi[j] * 58 + c;
-            c = t >> 32;
-            outi[j] = t & 0xffffffff;
-        }
-        if (c || outi[0] & remmask)
-            goto out;
-    }
-
-    j = 0;
-    switch (rem) {
-        case 3:
-            *(bin++) = (outi[0] >> 16) & 0xff;
-        case 2:
-            *(bin++) = (outi[0] >> 8) & 0xff;
-        case 1:
-            *(bin++) = outi[0] & 0xff;
-            ++j;
-        default:
-            break;
-    }
-    for (; j < outisz; ++j) {
-        be32enc((uint32_t *) bin, outi[j]);
-        bin += sizeof(uint32_t);
-    }
-
-    rc = true;
-    out:
-    free(outi);
-    return rc;
-}
-
-static int b58check(unsigned char *bin, size_t binsz, const char *b58) {
-    unsigned char buf[32];
-    int i;
-
-    sha256d(buf, bin, (int) (binsz - 4));
-    if (memcmp(&bin[binsz - 4], buf, 4))
-        return -1;
-
-    /* Check number of zeros is correct AFTER verifying checksum
-     * (to avoid possibility of accessing the string beyond the end) */
-    for (i = 0; bin[i] == '\0' && b58[i] == '1'; ++i);
-    if (bin[i] == '\0' || b58[i] == '1')
-        return -3;
-
-    return bin[0];
-}
-
 bool jobj_binary(const json_t *obj, const char *key, void *buf, size_t buflen) {
     const char *hexstr;
     json_t *tmp;
@@ -754,52 +653,18 @@ bool jobj_binary(const json_t *obj, const char *key, void *buf, size_t buflen) {
     return true;
 }
 
-size_t address_to_script(unsigned char *out, size_t outsz, const char *addr) {
-    unsigned char addrbin[25];
-    int addrver;
-    size_t rv;
-
-    if (!b58dec(addrbin, sizeof(addrbin), addr))
-        return 0;
-    addrver = b58check(addrbin, sizeof(addrbin), addr);
-    if (addrver < 0)
-        return 0;
-    switch (addrver) {
-        case 5:    /* Bitcoin script hash */
-        case 196:  /* Testnet script hash */
-            if (outsz < (rv = 23))
-                return rv;
-            out[0] = 0xa9;  /* OP_HASH160 */
-            out[1] = 0x14;  /* push 20 bytes */
-            memcpy(&out[2], &addrbin[1], 20);
-            out[22] = 0x87;  /* OP_EQUAL */
-            return rv;
-        default:
-            if (outsz < (rv = 25))
-                return rv;
-            out[0] = 0x76;  /* OP_DUP */
-            out[1] = 0xa9;  /* OP_HASH160 */
-            out[2] = 0x14;  /* push 20 bytes */
-            memcpy(&out[3], &addrbin[1], 20);
-            out[23] = 0x88;  /* OP_EQUALVERIFY */
-            out[24] = 0xac;  /* OP_CHECKSIG */
-            return rv;
-    }
-}
-
 /* Subtract the `struct timeval' values X and Y,
    storing the result in RESULT.
    Return 1 if the difference is negative, otherwise 0.  */
-int timeval_subtract(struct timeval *result, struct timeval *x,
-                     struct timeval *y) {
+int timeval_subtract(struct timeval *result, struct timeval *x, struct timeval *y) {
     /* Perform the carry for the later subtraction by updating Y. */
     if (x->tv_usec < y->tv_usec) {
-        int nsec = (y->tv_usec - x->tv_usec) / 1000000 + 1;
+        __suseconds_t nsec = (y->tv_usec - x->tv_usec) / 1000000 + 1;
         y->tv_usec -= 1000000 * nsec;
         y->tv_sec += nsec;
     }
     if (x->tv_usec - y->tv_usec > 1000000) {
-        int nsec = (x->tv_usec - y->tv_usec) / 1000000;
+        __suseconds_t nsec = (x->tv_usec - y->tv_usec) / 1000000;
         y->tv_usec += 1000000 * nsec;
         y->tv_sec -= nsec;
     }
@@ -831,6 +696,18 @@ bool fulltest(const uint32_t *hash, const uint32_t *target) {
     return rc;
 }
 
+void calc_network_diff(work_t *work) {
+    uint32_t nbits = swab32(work->data[18]);
+    uint32_t bits = (nbits & 0xffffff);
+    int16_t shift = (swab32(nbits) & 0xff); // 0x1c = 28
+    double d = (double) 0x0000ffff / (double) bits;
+    for (int m = shift; m < 29; m++) d *= 256.0;
+    for (int m = 29; m < shift; m++) d /= 256.0;
+    if (opt_debug)
+        applog(LOG_DEBUG, "net diff: %f -> shift %u, bits %08x", d, shift, bits);
+    net_diff = d;
+}
+
 void diff_to_target(uint32_t *target, double diff) {
     uint64_t m;
     int k;
@@ -846,7 +723,6 @@ void diff_to_target(uint32_t *target, double diff) {
         target[k + 1] = (uint32_t) (m >> 32);
     }
 }
-
 
 // Only used by stratum pools
 void work_set_target(struct work *work, double diff) {
@@ -873,11 +749,11 @@ double target_to_diff(uint32_t *target) {
         return (double) 0x0000ffff00000000 / m;
 }
 
-uint8_t target_to_zeros(uint32_t *target) {
+int target_to_zeros(uint32_t *target) {
     uint8_t *tgt = (uint8_t *) target;
-    uint8_t zeros = 0;
+    int zeros = 0;
     uint8_t N = 8;
-    for (int i = 31; i != 0; --i) {
+    for (uint8_t i = 31; i != 0; --i) {
         if (tgt[i] == 0)
             zeros += 8;
         else {
@@ -890,22 +766,18 @@ uint8_t target_to_zeros(uint32_t *target) {
     return zeros;
 }
 
-#ifdef WIN32
-#define socket_blocks() (WSAGetLastError() == WSAEWOULDBLOCK)
-#else
 #define socket_blocks() (errno == EAGAIN || errno == EWOULDBLOCK)
-#endif
 
 static bool send_line(curl_socket_t sock, char *s) {
     size_t sent = 0;
-    int len;
+    size_t len;
 
-    len = (int) strlen(s);
+    len = strlen(s);
     s[len++] = '\n';
 
     while (len > 0) {
         struct timeval timeout = {0, 0};
-        int n;
+        ssize_t n;
         fd_set wd;
 
         FD_ZERO(&wd);
@@ -921,12 +793,11 @@ static bool send_line(curl_socket_t sock, char *s) {
         sent += n;
         len -= n;
     }
-
     return true;
 }
 
 bool stratum_send_line(struct stratum_ctx *sctx, char *s) {
-    bool ret = false;
+    bool ret;
     applog(LOG_STRATUM, "[STRATUM_SEND] %s", s);
 
     pthread_mutex_lock(&sctx->sock_lock);
@@ -1016,7 +887,7 @@ char *stratum_recv_line(struct stratum_ctx *sctx) {
     len = (ssize_t) strlen(sret);
 
     if (buflen > len + 1) {
-        memmove(sctx->sockbuf, sctx->sockbuf + len + 1, buflen - len + 1);
+        memmove(sctx->sockbuf, sctx->sockbuf + len + 1, (buflen - len + 1));
     } else
         sctx->sockbuf[0] = '\0';
 
@@ -1136,12 +1007,12 @@ static bool stratum_parse_extranonce(struct stratum_ctx *sctx, json_t *params, i
     const char *xnonce1;
     int xn2_size;
 
-    xnonce1 = json_string_value(json_array_get(params, pndx));
+    xnonce1 = json_string_value(json_array_get(params, (size_t) pndx));
     if (!xnonce1) {
         applog(LOG_ERR, "Failed to get extranonce1");
         goto out;
     }
-    xn2_size = (int) json_integer_value(json_array_get(params, pndx + 1));
+    xn2_size = (int) json_integer_value(json_array_get(params, (size_t) (pndx + 1)));
     if (!xn2_size) {
         applog(LOG_ERR, "Failed to get extranonce2_size");
         goto out;
@@ -1162,7 +1033,7 @@ static bool stratum_parse_extranonce(struct stratum_ctx *sctx, json_t *params, i
         goto out;
     }
     hex2bin(sctx->xnonce1, xnonce1, sctx->xnonce1_size);
-    sctx->xnonce2_size = xn2_size;
+    sctx->xnonce2_size = (size_t) xn2_size;
     pthread_mutex_unlock(&sctx->work_lock);
 
     if (pndx == 0 && opt_debug) /* pool dynamic change */
@@ -1281,8 +1152,7 @@ bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *p
                 user, pass);
     }
 
-    if (!stratum_send_line(sctx, s))
-        goto out;
+    stratum_send_line(sctx, s);
 
     while (1) {
         sret = stratum_recv_line(sctx);
@@ -1354,6 +1224,8 @@ static uint32_t getblocheight(struct stratum_ctx *sctx) {
             case 3:
                 height += 0x10000UL * (*p);
                 break;
+            default:
+                break;
         }
     }
     return height;
@@ -1364,7 +1236,7 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params) {
     const char *claim = NULL;
     size_t coinb1_size, coinb2_size;
     bool clean, ret = false;
-    int merkle_count, i, p = 0;
+    size_t merkle_count, i, p = 0;
     bool has_claim = json_array_size(params) == 10; // todo: use opt_algo
     json_t *merkle_arr;
     uchar **merkle;
@@ -1506,7 +1378,6 @@ static bool json_object_set_error(json_t *result, int code, const char *msg) {
     return json_object_set_new(result, "error", val) != -1;
 }
 
-
 /* allow to report algo perf to the pool for algo stats */
 static bool stratum_benchdata(json_t *result, json_t *params, int thr_id) {
     char algo[64] = {0};
@@ -1521,18 +1392,13 @@ static bool stratum_benchdata(json_t *result, json_t *params, int thr_id) {
 
     if (!opt_stratum_stats) return false;
 
-#if defined(WIN32) && (defined(_M_X64) || defined(__x86_64__))
-    strcpy(os, "win64");
-#else
-    strcpy(os, is_windows() ? "win32" : "linux");
-#endif
+    strcpy(os, "linux");
 
-#ifdef _MSC_VER
-    sprintf(compiler, "MSVC %d\n", msver());
+
+#ifdef __GNUC__
+    sprintf(compiler, "GCC %d.%d.%d\n", __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 #elif defined(__clang__)
     sprintf(compiler, "clang %s\n", __clang_version__);
-#elif defined(__GNUC__)
-    sprintf(compiler, "GCC %d.%d.%d\n", __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 #endif
 
 #ifdef __AVX2__
@@ -1555,32 +1421,15 @@ static bool stratum_benchdata(json_t *result, json_t *params, int thr_id) {
     strcat(compiler, " SSE");
 #endif
 
-    cpu_bestfeature(arch, 16);
-    if (has_aes_ni()) strcat(arch, " NI");
-
-    cpu_getmodelid(vendorid, 32);
-    cpu_getname(cpuname, 80);
-    p = strstr(cpuname, " @ ");
-    if (p) {
-        char freq[32] = {0};
-        *p = '\0';
-        p += 3;
-        snprintf(freq, 32, "%s", p);
-        cpufreq = atof(freq);
-        p = strstr(freq, "GHz");
-        if (p) cpufreq *= 1000;
-        applog(LOG_NOTICE, "sharing CPU stats with freq %s", freq);
-    }
-
     compiler[31] = '\0';
 
     val = json_object();
     json_object_set_new(val, "algo", json_string(algo));
-    json_object_set_new(val, "type", json_string("cpu"));
-    json_object_set_new(val, "device", json_string(cpuname));
+    json_object_set_new(val, "type", json_string("asic"));
+    json_object_set_new(val, "device", json_string("asic_miner"));
     json_object_set_new(val, "vendorid", json_string(vendorid));
     json_object_set_new(val, "arch", json_string(arch));
-    json_object_set_new(val, "freq", json_integer((uint64_t) cpufreq));
+    json_object_set_new(val, "freq", json_integer(0));
     json_object_set_new(val, "memf", json_integer(0));
     json_object_set_new(val, "power", json_integer(0));
     json_object_set_new(val, "khashes", json_real((double) global_hashrate / 1000.0));
@@ -1907,52 +1756,6 @@ void *tq_pop(struct thread_q *tq, const struct timespec *abstime) {
     pthread_mutex_unlock(&tq->mutex);
     return rval;
 }
-
-/* sprintf can be used in applog */
-static char *format_hash(char *buf, uint8_t *hash) {
-    int len = 0;
-    for (int i = 0; i < 32; i += 4) {
-        len += sprintf(buf + len, "%02x%02x%02x%02x ",
-                       hash[i], hash[i + 1], hash[i + 2], hash[i + 3]);
-    }
-    return buf;
-}
-
-void applog_compare_hash(void *hash, void *hash_ref) {
-    char s[256] = "";
-    int len = 0;
-    uchar *hash1 = (uchar *) hash;
-    uchar *hash2 = (uchar *) hash_ref;
-    for (int i = 0; i < 32; i += 4) {
-        const char *color = memcmp(hash1 + i, hash2 + i, 4) ? CL_WHT : CL_GRY;
-        len += sprintf(s + len, "%s%02x%02x%02x%02x " CL_GRY, color,
-                       hash1[i], hash1[i + 1], hash1[i + 2], hash1[i + 3]);
-        s[len] = '\0';
-    }
-    applog(LOG_DEBUG, "%s", s);
-}
-
-void applog_hash(void *hash) {
-    char s[128] = {'\0'};
-    applog(LOG_DEBUG, "%s", format_hash(s, (uchar *) hash));
-}
-
-void applog_hex(void *data, int len) {
-    char *hex = abin2hex((uchar *) data, len);
-    applog(LOG_DEBUG, "%s", hex);
-    free(hex);
-}
-
-void applog_hash64(void *hash) {
-    char s[128] = {'\0'};
-    char t[128] = {'\0'};
-    applog(LOG_DEBUG, "%s %s", format_hash(s, (uchar *) hash), format_hash(t, &((uchar *) hash)[32]));
-}
-
-
-#define printpfx(n, h) \
-    printf("%s%11s%s: %s\n", CL_CYN, n, CL_N, format_hash(s, (uint8_t*) h))
-
 
 // -------------------- RPC 2.0 (XMR/AEON) -------------------------
 

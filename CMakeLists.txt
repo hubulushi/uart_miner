@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
 project(uart_miner C ASM CXX)
-
+set(CMAKE_C_COMPILER "clang")
+set(CMAKE_CXX_COMPILER "clang++")
 set(CMAKE_C_STANDARD 11)
 
 set_source_files_properties(src/uint256.cpp PROPERTIES COMPILE_FLAGS "-Wno-effc++")
@@ -44,7 +45,6 @@ set(src_directory
         src/x11.c
         src/cryptonight.c
         src/serial.c
-        src/sysinfos.c
         src/util.c
         src/uint256.cpp
         src/communication.c
@@ -52,4 +52,5 @@ set(src_directory
 
 set(SOURCE_FILES ${src_directory} ${sha3_directory} ${crypto_directory})
 add_executable(uart_miner ${SOURCE_FILES} src/uart-miner.c)
+add_executable(uart_tester ${SOURCE_FILES} src/uart-tester.c)
 target_link_libraries(uart_miner jansson curl ssl pthread)

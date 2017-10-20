@@ -132,21 +132,23 @@ uint8_t board_init_chip_array(board_t *board){
     serial_write(&board->cmd_serial, &data_in, 1);
     serial_read(&board->cmd_serial, buf, 1, -1);
     board->chip_nums = (uint8_t) (*(buf) - 0x80);
+    free(buf);
     if (!board->chip_nums) {
-        applog(LOG_ERR, "press the button...");
+        applog(LOG_ERR, "This chip has initiated.");
         exit(1);
     }
     applog(LOG_INFO,"miner has %d chips, serial open succeeded", board->chip_nums);
-    for (uint8_t i = 0; i < board->chip_nums; ++i) {
 //      i = 0 means broadcast address
+    for (uint8_t i = 0; i < board->chip_nums; ++i)
         *board->chip_array[i].chip_id = i;
-    }
+
 //    make sure next choose can choose all chip
     board->current_chip = 0xFF;
     board_reset(board, 0);
-    uint8_t cycle_reg[1] = {0x4E};
-    if (opt_algo == ALGO_X11)
+    if (!jsonrpc_2) {
+        uint8_t cycle_reg[1] = {0x4E};
         board_write_reg(board, 0, CYCLES_REG, cycle_reg);
+    }
     board_assign_nonce(board);
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
@@ -175,6 +177,7 @@ uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
         uint8_t disable_test_cmd[2] = {0x90, 0x80};
         board_write_reg(board, chip_id, CTRL_REG, disable_test_cmd);
     }
+    return 0;
 }
 uint8_t board_set_target(board_t *board){
     applog(LOG_DEBUG, "writing target to board.");
@@ -199,6 +202,7 @@ uint8_t board_reset(board_t *board, uint8_t chip_id) {
     //             1      0       0       0       0       0       0       0
     uint8_t reset_cmd[2] = {0x90, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
+    return 0;
 }
 
 uint8_t board_start(board_t *board, uint8_t chip_id) {
@@ -209,9 +213,10 @@ uint8_t board_start(board_t *board, uint8_t chip_id) {
     //             1      0       0       0       0       1       0       0
     uint8_t start_cmd[2] = {0xC0, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, start_cmd);
+    return 0;
 }
 uint8_t board_wait_for_nonce(board_t *board){
-    uint8_t buf_len = (uint8_t) (jsonrpc_2 ? 39 : 7);
+    uint8_t buf_len = (uint8_t) (jsonrpc_2 ? 38 : 7);
     uint8_t serial_data[7];
     uint8_t check_sum=0x00;
     if (serial_read(&board->nonce_serial, serial_data, buf_len, 100) > 0) {
@@ -220,14 +225,12 @@ uint8_t board_wait_for_nonce(board_t *board){
         if (check_sum != serial_data[buf_len - 1])
             applog(LOG_WARNING, "[SERIAL_NONCE] check sum: %02x not match %02x.", check_sum, serial_data[buf_len - 1]);
         if (jsonrpc_2) {
-            memcpy(board->work_id, serial_data, 1);
-            memcpy(board->nonce, serial_data + 2, 4);
-            memcpy(board->hash, serial_data + 6, 32);
+            memcpy(board->nonce, serial_data + 1, 4);
+            memcpy(board->hash, serial_data + 5, 32);
             char *nonce_data_hex = abin2hex(serial_data, buf_len);
-            char *work_id_hex = abin2hex(board->work_id, 1);
             char *nonce_hex = abin2hex(board->nonce, 4);
             char *hash_hex = abin2hex(board->hash, 32);
-            applog(LOG_SERIAL, "[SERIAL_NONCE] nonce_cnt: %d, data: %s, work_id: %s, nonce: %s, hex: %s", nonce_cnt, nonce_data_hex, work_id_hex, nonce_hex, hash_hex);
+            applog(LOG_SERIAL, "[SERIAL_NONCE] nonce_cnt: %d, data: %s, nonce: %s, hex: %s", nonce_cnt, nonce_data_hex, nonce_hex, hash_hex);
             return 1;
         } else {
             memcpy(board->work_id, serial_data, 1);
@@ -298,6 +301,7 @@ uint8_t board_soft_reset_chip(board_t *board, uint8_t chip_id){
     //             1      0       0       0       0       1       0       0
     uint8_t reset_cmd[2] = {0x90, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
+    return 0;
 }
 uint8_t board_hard_reset(board_t *board){
     //TODO: need to add GPIO to reset whole board.

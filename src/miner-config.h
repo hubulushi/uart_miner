@@ -98,7 +98,7 @@
 #define PACKAGE_TARNAME "uart_miner"
 
 /* Define to the home page for this package. */
-#define PACKAGE_URL ""
+#define PACKAGE_URL "https://www.github.com/sequencer/uartminer"
 
 /* Define to the version of this package. */
 #define PACKAGE_VERSION "v0.1"
@@ -130,7 +130,7 @@
 #define USE_XOP 1
 
 /* Version number of package */
-#define VERSION "1.3.3"
+#define USER_AGENT PACKAGE_NAME "/" PACKAGE_VERSION
 
 /* Define to `unsigned int' if <sys/types.h> does not define. */
 /* #undef size_t */

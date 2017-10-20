@@ -47,7 +47,6 @@ struct workio_cmd {
 bool opt_debug = true;
 bool opt_serial_debug = false;
 bool opt_stratum_debug = false;
-bool use_colors = true;
 bool opt_uart = false;
 bool opt_quiet = false;
 int opt_maxlograte = 5;
@@ -55,11 +54,11 @@ long opt_proxy_type;
 bool opt_redirect = true;
 bool opt_stratum_stats = false;
 static int opt_retries = -1;
-static unsigned int opt_fail_pause = 10;
+static uint8_t opt_fail_pause = 10;
 static int opt_time_limit = 0;
 int opt_timeout = 300;
 enum algos opt_algo;
-long nonce_cnt=1;
+long nonce_cnt = 1;
 char *rpc_url;
 char *rpc_userpass;
 char *rpc_user, *rpc_pass;
@@ -167,7 +166,7 @@ void proper_exit(int reason) {
 }
 
 bool rpc2_stratum_job(struct stratum_ctx *sctx, json_t *params) {
-    bool ret = false;
+    bool ret;
     pthread_mutex_lock(&sctx->work_lock);
     ret = rpc2_job_decode(params, &sctx->work);
 
@@ -228,19 +227,6 @@ bool rpc2_login(CURL *curl) {
 }
 
 
-/* compute nbits to get the network diff */
-static void calc_network_diff(work_t *work) {
-    uint32_t nbits = swab32(work->data[18]);
-    uint32_t bits = (nbits & 0xffffff);
-    int16_t shift = (swab32(nbits) & 0xff); // 0x1c = 28
-    double d = (double) 0x0000ffff / (double) bits;
-    for (int m = shift; m < 29; m++) d *= 256.0;
-    for (int m = 29; m < shift; m++) d /= 256.0;
-    if (opt_debug)
-        applog(LOG_DEBUG, "net diff: %f -> shift %u, bits %08x", d, shift, bits);
-    net_diff = d;
-}
-
 static int share_result(int result, const char *reason) {
     pthread_mutex_lock(&stats_lock);
     result ? accepted_count++ : rejected_count++;
@@ -252,10 +238,8 @@ static int share_result(int result, const char *reason) {
     return 1;
 }
 
-static bool submit_upstream_work(CURL *curl, work_t *work) {
-    json_t *val, *res, *reason;
+static bool submit_upstream_work(work_t *work) {
     char s[JSON_BUF_LEN];
-    int i;
     bool rc = false;
 
     /* pass if the previous hash is not the current previous hash */
@@ -269,14 +253,12 @@ static bool submit_upstream_work(CURL *curl, work_t *work) {
     char ntimestr[9], noncestr[9];
     uchar hash[32], board_hash[32];
     if (jsonrpc_2) {
-
         bin2hex(noncestr, (const unsigned char *) work->data + 39, 4);
         if (opt_uart) {
             cryptonight_hash(hash, work->data, 76);
             memcpy(board_hash, work->hash, 32);
             applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(hash, 32), abin2hex(board_hash, 32));
-        }
-        else
+        } else
             cryptonight_hash(hash, work->data, 76);
         char *hashhex = abin2hex(hash, 32);
         snprintf(s, JSON_BUF_LEN,
@@ -374,11 +356,11 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl) {
     return true;
 }
 
-static bool workio_submit_work(struct workio_cmd *wc, CURL *curl) {
+static bool workio_submit_work(struct workio_cmd *wc) {
     int failures = 0;
 
     /* submit solution to bitcoin via JSON-RPC */
-    while (!submit_upstream_work(curl, wc->u.work)) {
+    while (!submit_upstream_work(wc->u.work)) {
         if (unlikely((opt_retries >= 0) && (++failures > opt_retries))) {
             applog(LOG_ERR, "...terminating workio thread");
             return false;
@@ -406,7 +388,6 @@ static void *workio_thread(void *userdata) {
         /* wait for workio_cmd sent to us, on our queue */
         wc = (struct workio_cmd *) tq_pop(mythr->q, NULL);
         if (!wc) {
-            ok = false;
             break;
         }
 
@@ -416,10 +397,9 @@ static void *workio_thread(void *userdata) {
                 ok = workio_get_work(wc, curl);
                 break;
             case WC_SUBMIT_WORK:
-                ok = workio_submit_work(wc, curl);
+                ok = workio_submit_work(wc);
                 break;
             default:        /* should never happen */
-                ok = false;
                 break;
         }
 
@@ -548,13 +528,13 @@ static void *miner_thread(void *userdata) {
 
         // to clean: is g_work loaded before the memcmp ?
         regen_work = regen_work || ((*nonceptr) >= end_nonce
-                                    && !(memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], wkcmp_sz) ||
+                                    && !(memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], (size_t) wkcmp_sz) ||
                                          jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0));
         if (regen_work) {
             stratum_gen_work(&stratum, &g_work);
         }
 
-        if (memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], wkcmp_sz) ||
+        if (memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], (size_t) wkcmp_sz) ||
             jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0) {
             work_free(&work);
             work_copy(&work, &g_work);
@@ -574,7 +554,7 @@ static void *miner_thread(void *userdata) {
         /* time limit */
         if (opt_time_limit && firstwork_time) {
             int passed = (int) (time(NULL) - firstwork_time);
-            int remain = (int) (opt_time_limit - passed);
+            int remain = opt_time_limit - passed;
             if (remain < 0) {
                 if (thr_id != 0) {
                     sleep(1);
@@ -665,28 +645,31 @@ static void *uart_miner_thread(void *userdata) {
         nonce_offset = 39;
     else
         nonce_offset = 76;
+
     while (1) {
         while (!jsonrpc_2 && time(NULL) >= g_work_time + 120)
             sleep(1);
         pthread_mutex_lock(&g_work_lock);
-        regen_work = regen_work || memcmp(&work.data[0], &g_work.data[0], 76);
-        if (regen_work) {
-            stratum_gen_work(&stratum, &g_work);
-            if (jsonrpc_2 ? memcmp(work.target, g_work.target, 8) : (work.targetdiff != g_work.targetdiff)) {
-//        g_work diff has changed.
-                if (!jsonrpc_2)
-                    work.targetdiff = g_work.targetdiff;
-                le32enc(board->chip_array[0].target, g_work.target[6]);
-                le32enc(board->chip_array[0].target + 4, g_work.target[7]);
+
+        if (unlikely(memcmp(work.target, g_work.target, 8))) {
+//        target has changed.
+            le32enc(board->chip_array[0].target, g_work.target[6]);
+            le32enc(board->chip_array[0].target + 4, g_work.target[7]);
             board_set_target(board);
         }
+
+        regen_work = regen_work || memcmp(&work.data[0], &g_work.data[0], 76);
+        if (regen_work) {
+            if (!jsonrpc_2) {
+                stratum_gen_work(&stratum, &g_work);
 //    verjion 4*1B   prev_hash 4*8B   merkle_root 4*8B   ntime 4*1B   nbits 4*1B
 //		data_in has changed
 //			  job_id has changed, need to clear fifo.
-            if (*board->restart_flag) {
-                board_flush_fifo(board, 0);
-                *board->restart_flag = 0;
-                applog(LOG_DEBUG, "job id: %s came, flushed FIFO", g_work.job_id);
+                if (*board->restart_flag) {
+                    board_flush_fifo(board, 0);
+                    *board->restart_flag = 0;
+                    applog(LOG_DEBUG, "job id: %s came, flushed FIFO", g_work.job_id);
+                }
             }
 //            copy work from g_work to work
             work_free(&work);
@@ -697,19 +680,16 @@ static void *uart_miner_thread(void *userdata) {
             else
                 for (int i = 0; i < 19; ++i)
                     le32enc(board->chip_array[0].data_in + 4 * i, work.data[18 - i]);
-/**/
             board_set_data_in(board, 0);
-//            WORK_ID_REG
 
-            if (jsonrpc_2) {
-                work_index = 0;
-            } else {
+//            WORK_ID_REG
+            if (!jsonrpc_2) {
                 work_copy(work_list + work_index, &work);
                 memcpy(board->chip_array[0].work_id, &work_index, 1);
                 applog(LOG_DEBUG, "work_id_index: %d, xnonce2: %s", work_index, work.xnonce2);
                 work_index = (work_index + 1) % 16;
+                board_set_workid(board, 0);
             }
-            board_set_workid(board, 0);
             board_start(board, 0);
             regen_work = 0;
         }
@@ -726,19 +706,24 @@ static void *uart_miner_thread(void *userdata) {
             }
         }
 
-//          make sure nonce is not full
+//          for every second
         gettimeofday(&tv_now, NULL);
         timeval_subtract(&diff, &tv_now, &tv_start);
-        if (!jsonrpc_2 && diff.tv_sec > 1) {
-            for (uint8_t j = 1; j <= board->chip_nums; ++j) {
-                regen_work = (uint8_t) (regen_work || board_get_fifo(board, j));
+        if (diff.tv_sec > 1) {
+//            get fifo status
+            if (!jsonrpc_2) {
+                for (uint8_t j = 1; j <= board->chip_nums; ++j) {
+                    regen_work = (uint8_t) (regen_work || board_get_fifo(board, j));
+                }
             }
+//            TODO:get hash speed
             gettimeofday(&tv_start, NULL);
         }
 
         if (unlikely(need_restart))
             goto start_miner;
     }
+    return NULL;
 }
 
 static bool stratum_handle_response(char *buf) {
@@ -829,14 +814,14 @@ static void *stratum_thread(void *userdata) {
         }
 
         if ((stratum.job.job_id && (!g_work_time || strcmp(stratum.job.job_id, g_work.job_id))) ||
-            stratum.work.job_id && (!g_work_time || strcmp(stratum.work.job_id, g_work.job_id))) {
+            (stratum.work.job_id && (!g_work_time || strcmp(stratum.work.job_id, g_work.job_id)))) {
             pthread_mutex_lock(&g_work_lock);
             stratum_gen_work(&stratum, &g_work);
             time(&g_work_time);
             pthread_mutex_unlock(&g_work_lock);
 
             if (stratum.job.clean || jsonrpc_2) {
-                static uint32_t last_bloc_height;
+                static int last_bloc_height;
                 if (!opt_quiet && last_bloc_height != stratum.bloc_height) {
                     last_bloc_height = stratum.bloc_height;
                     if (net_diff > 0.)
@@ -871,9 +856,10 @@ static void *stratum_thread(void *userdata) {
     out:
     return NULL;
 }
+
 static void show_usage_and_exit(int status) {
     if (status)
-        fprintf(stderr, "Try `" PACKAGE_NAME " --help' for more information.\n");
+        applog(LOG_ERR, "Try `" PACKAGE_NAME " --help' for more information.\n");
     else
         printf(usage);
     exit(status);
@@ -888,22 +874,14 @@ void parse_arg(int key, char *arg) {
 //    TODO: need to be more clear
     char *p;
     int v, i;
-    uint64_t ul;
-    double d;
 
     switch (key) {
 //{ "algo", 1, NULL, 'a' },
         case 'a':
             for (i = 0; i < ALGO_COUNT; i++) {
                 v = (int) strlen(algo_names[i]);
-                if (v && !strncasecmp(arg, algo_names[i], v)) {
+                if (v && !strncasecmp(arg, algo_names[i], (size_t) v)) {
                     if (arg[v] == '\0') {
-                        opt_algo = (enum algos) i;
-                        break;
-                    }
-                    if (arg[v] == ':') {
-                        char *ep;
-                        v = strtol(arg + v + 1, &ep, 10);
                         opt_algo = (enum algos) i;
                         break;
                     }
@@ -922,7 +900,7 @@ void parse_arg(int key, char *arg) {
         case 1010:
             p = strchr(arg, ':');
             if (!p) {
-                fprintf(stderr, "invalid path/to/cmd:speed -- '%s'\n", arg);
+                applog(LOG_ERR, "invalid path/to/cmd:speed -- '%s'\n", arg);
                 show_usage_and_exit(1);
             }
             free(cmd_path);
@@ -934,7 +912,7 @@ void parse_arg(int key, char *arg) {
         case 1011:
             p = strchr(arg, ':');
             if (!p) {
-                fprintf(stderr, "invalid path/to/nonce:speed -- '%s'\n", arg);
+                applog(LOG_ERR, "invalid path/to/nonce:speed -- '%s'\n", arg);
                 show_usage_and_exit(1);
             }
             free(nonce_path);
@@ -961,7 +939,7 @@ void parse_arg(int key, char *arg) {
                     rpc_pass = strdup(++p);
                     if (*p) *p++ = 'x';
                     v = (int) strlen(hp + 1) + 1;
-                    memmove(p + 1, hp + 1, v);
+                    memmove(p + 1, hp + 1, (size_t) v);
                     memset(p + v, 0, hp - p);
                     hp = p;
                 } else {
@@ -975,7 +953,7 @@ void parse_arg(int key, char *arg) {
                 if (strncasecmp(arg, "http://", 7) &&
                     strncasecmp(arg, "https://", 8) &&
                     strncasecmp(arg, "stratum+tcp://", 14)) {
-                    fprintf(stderr, "unknown protocol -- '%s'\n", arg);
+                    applog(LOG_ERR, "unknown protocol -- '%s'\n", arg);
                     show_usage_and_exit(1);
                 }
                 free(rpc_url);
@@ -984,8 +962,8 @@ void parse_arg(int key, char *arg) {
                 short_url = &rpc_url[ap - arg];
             } else {
                 if (*hp == '\0' || *hp == '/') {
-                    fprintf(stderr, "invalid URL -- '%s'\n",
-                            arg);
+                    applog(LOG_ERR, "invalid URL -- '%s'\n",
+                           arg);
                     show_usage_and_exit(1);
                 }
                 free(rpc_url);
@@ -999,7 +977,7 @@ void parse_arg(int key, char *arg) {
         case 'O':            /* --userpass */
             p = strchr(arg, ':');
             if (!p) {
-                fprintf(stderr, "invalid username:password pair -- '%s'\n", arg);
+                applog(LOG_ERR, "invalid username:password pair -- '%s'\n", arg);
                 show_usage_and_exit(1);
             }
             free(rpc_userpass);
@@ -1045,7 +1023,7 @@ void parse_arg(int key, char *arg) {
             v = atoi(arg);
             if (v < 1 || v > 9999) /* sanity check */
                 show_usage_and_exit(1);
-            opt_fail_pause = v;
+            opt_fail_pause = (uint8_t) v;
             break;
 //{ "time-limit", 1, NULL, 1008 },
         case 1008:
@@ -1085,12 +1063,12 @@ void parse_arg(int key, char *arg) {
             }
             if (!json_is_object(config)) {
                 if (err.line < 0)
-                    fprintf(stderr, "%s\n", err.text);
+                    applog(LOG_ERR, "%s\n", err.text);
                 else
-                    fprintf(stderr, "%s:%d: %s\n",
-                            arg, err.line, err.text);
+                    applog(LOG_ERR, "%s:%d: %s\n", arg, err.line, err.text);
+                exit(1);
             } else {
-                parse_config(config, arg);
+                parse_config(config);
                 json_decref(config);
             }
             break;
@@ -1103,7 +1081,7 @@ void parse_arg(int key, char *arg) {
     }
 }
 
-void parse_config(json_t *config, char *ref) {
+void parse_config(json_t *config) {
     int i;
     json_t *val;
 
@@ -1147,8 +1125,7 @@ static void parse_cmdline(int argc, char *argv[]) {
         parse_arg(key, optarg);
     }
     if (optind < argc) {
-        fprintf(stderr, "%s: unsupported non-option argument -- '%s'\n",
-                argv[0], argv[optind]);
+        applog(LOG_ERR, "%s: unsupported non-option argument -- '%s'", argv[0], argv[optind]);
         show_usage_and_exit(1);
     }
 }
@@ -1166,6 +1143,8 @@ static void signal_handler(int sig) {
             applog(LOG_INFO, "SIGTERM received, exiting");
             proper_exit(0);
             break;
+        default:
+            break;
     }
 }
 
@@ -1177,7 +1156,7 @@ static int thread_create(struct thr_info *thr, void *func) {
     return err;
 }
 
-void get_defconfig_path(char *out, size_t bufsize, char *argv0);
+void get_defconfig_path(char *out, size_t bufsize, char *argv0, char *argv1);
 
 int main(int argc, char *argv[]) {
     struct thr_info *thr;
@@ -1188,10 +1167,9 @@ int main(int argc, char *argv[]) {
 
     // try default config file in binary folder
     char defconfig[PATH_MAX] = {0};
+    get_defconfig_path(defconfig, PATH_MAX, argv[0], argv[1]);
     parse_arg('c', defconfig);
-    get_defconfig_path(defconfig, PATH_MAX, argv[0]);
-    applog(LOG_INFO, "Using config %s", defconfig);
-    parse_cmdline(argc, argv);
+
     opt_uart = cmd_speed && nonce_speed;
     if (opt_algo == ALGO_XMR)
         jsonrpc_2 = true;
