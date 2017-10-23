@@ -217,8 +217,9 @@ uint8_t board_start(board_t *board, uint8_t chip_id) {
 }
 uint8_t board_wait_for_nonce(board_t *board){
     uint8_t buf_len = (uint8_t) (jsonrpc_2 ? 38 : 7);
-    uint8_t serial_data[7];
+    uint8_t serial_data[buf_len];
     uint8_t check_sum=0x00;
+
     if (serial_read(&board->nonce_serial, serial_data, buf_len, 100) > 0) {
         for (int i = 0; i < buf_len - 1; ++i)
             check_sum ^= serial_data[i];
@@ -230,7 +231,7 @@ uint8_t board_wait_for_nonce(board_t *board){
             char *nonce_data_hex = abin2hex(serial_data, buf_len);
             char *nonce_hex = abin2hex(board->nonce, 4);
             char *hash_hex = abin2hex(board->hash, 32);
-            applog(LOG_SERIAL, "[SERIAL_NONCE] nonce_cnt: %d, data: %s, nonce: %s, hex: %s", nonce_cnt, nonce_data_hex, nonce_hex, hash_hex);
+            applog(LOG_SERIAL, "[SERIAL_NONCE] nonce_cnt: %d, data: %s, nonce: %s, hash: %s", nonce_cnt, nonce_data_hex, nonce_hex, hash_hex);
             return 1;
         } else {
             memcpy(board->work_id, serial_data, 1);
