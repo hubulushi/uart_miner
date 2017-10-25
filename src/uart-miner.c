@@ -636,6 +636,7 @@ static void *uart_miner_thread(void *userdata) {
     gettimeofday(&tv_start, NULL);
     bool regen_work = false;
     uint8_t nonce_offset;
+    bool first_enter = true;
     if (jsonrpc_2)
         nonce_offset = 39;
     else
@@ -685,9 +686,11 @@ static void *uart_miner_thread(void *userdata) {
                 work_index = (work_index + 1) % 16;
                 board_set_workid(board, 0);
             }
-            board_start(board, 0);
+            if (!jsonrpc_2 || first_enter)
+                board_start(board, 0);
             regen_work = 0;
         }
+        first_enter = false;
         pthread_mutex_unlock(&g_work_lock);
 
         if (board_wait_for_nonce(board)) {
