@@ -48,6 +48,7 @@ bool opt_debug = true;
 bool opt_serial_debug = false;
 bool opt_stratum_debug = false;
 bool opt_uart = false;
+bool opt_test = false;
 bool opt_quiet = false;
 int opt_maxlograte = 5;
 long opt_proxy_type;
@@ -63,6 +64,8 @@ char *rpc_url;
 char *rpc_userpass;
 char *rpc_user, *rpc_pass;
 char *cmd_path, *nonce_path;
+uint8_t *test_data;
+uint8_t *test_target;
 uint32_t cmd_speed, nonce_speed;
 char *short_url = NULL;
 char *opt_cert;
@@ -128,6 +131,8 @@ static struct option const options[] = {
         {"algo",            1, NULL, 'a'},
         {"cmd-path",        1, NULL, 1010},
         {"nonce-path",      1, NULL, 1011},
+        {"test_data",       1, NULL, 1014},
+        {"test_target",     1, NULL, 1015},
         {"url",             1, NULL, 'o'},
         {"userpass",        1, NULL, 'O'},
         {"cert",            1, NULL, 1001},
@@ -144,11 +149,6 @@ static struct option const options[] = {
         {"debug",           0, NULL, 'D'},
         {"serial_debug",    0, NULL, 1012},
         {"stratum_debug",   0, NULL, 1013},
-        {"benchmark",       0, NULL, 1005},
-        {"cputest",         0, NULL, 1006},
-        {"max-temp",        1, NULL, 1060},
-        {"max-rate",        1, NULL, 1062},
-        {"max-diff",        1, NULL, 1061},
         {"config",          1, NULL, 'c'},
         {"help",            0, NULL, 'h'},
         {0,                 0, 0,    0}
@@ -251,14 +251,12 @@ static bool submit_upstream_work(work_t *work) {
 
     uint32_t ntime, nonce;
     char ntimestr[9], noncestr[9];
-    uchar hash[32], board_hash[32];
+    uchar hash[32];
     if (jsonrpc_2) {
         bin2hex(noncestr, (const unsigned char *) work->data + 39, 4);
-        if (opt_uart) {
-            cryptonight_hash(hash, work->data, 76);
-            memcpy(board_hash, work->hash, 32);
-            applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(hash, 32), abin2hex(board_hash, 32));
-        } else
+        if (opt_uart)
+            memcpy(hash, work->hash, 32);
+        else
             cryptonight_hash(hash, work->data, 76);
         char *hashhex = abin2hex(hash, 32);
         snprintf(s, JSON_BUF_LEN,
@@ -481,11 +479,9 @@ static void stratum_gen_work(struct stratum_ctx *sctx, work_t *work) {
 
         pthread_mutex_unlock(&sctx->work_lock);
 
-        if (opt_debug) {
-            char *xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
-            applog(LOG_DEBUG, "generating new xnonce2: job_id='%s' extranonce2=%s ntime=%08x", work->job_id, xnonce2str, swab32(work->data[17]));
-            free(xnonce2str);
-        }
+        char *xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
+        applog(LOG_DEBUG, "generating new xnonce2: job_id='%s' extranonce2=%s ntime=%08x", work->job_id, xnonce2str, swab32(work->data[17]));
+        free(xnonce2str);
 
         work_set_target(work, sctx->job.diff);
 
@@ -623,7 +619,6 @@ static void *miner_thread(void *userdata) {
 
 
 static void *uart_miner_thread(void *userdata) {
-//    jsonrpc2 lo
     start_miner:
     need_restart = 0;
     struct thr_info *mythr = (struct thr_info *) userdata;
@@ -651,7 +646,7 @@ static void *uart_miner_thread(void *userdata) {
             sleep(1);
         pthread_mutex_lock(&g_work_lock);
 
-        if (unlikely(memcmp(work.target, g_work.target, 8))) {
+        if (unlikely(memcmp(work.target + 6, g_work.target + 6, 8))) {
 //        target has changed.
             le32enc(board->chip_array[0].target, g_work.target[6]);
             le32enc(board->chip_array[0].target + 4, g_work.target[7]);
@@ -686,7 +681,7 @@ static void *uart_miner_thread(void *userdata) {
             if (!jsonrpc_2) {
                 work_copy(work_list + work_index, &work);
                 memcpy(board->chip_array[0].work_id, &work_index, 1);
-                applog(LOG_DEBUG, "work_id_index: %d, xnonce2: %s", work_index, work.xnonce2);
+                applog(LOG_DEBUG, "work_id_index: %d, xnonce2: %s", work_index, abin2hex(work.xnonce2, work.xnonce2_len));
                 work_index = (work_index + 1) % 16;
                 board_set_workid(board, 0);
             }
@@ -696,13 +691,20 @@ static void *uart_miner_thread(void *userdata) {
         pthread_mutex_unlock(&g_work_lock);
 
         if (board_wait_for_nonce(board)) {
-            nonce_cnt++;
-            work_t upload_work = jsonrpc_2 ? work : work_list[*board->work_id];
-            memcpy(((uint8_t *) upload_work.data + nonce_offset), board->nonce, 4);
-            if (jsonrpc_2)
-                memcpy(upload_work.hash, board->hash, 32);
-            if (!submit_work(mythr, &upload_work)) {
-                break;
+            if (!opt_test) {
+                nonce_cnt++;
+                work_t upload_work = jsonrpc_2 ? work : work_list[*board->work_id];
+                memcpy(((uint8_t *) upload_work.data + nonce_offset), board->nonce, 4);
+                if (jsonrpc_2)
+                    memcpy(upload_work.hash, board->hash, 32);
+                if (!submit_work(mythr, &upload_work)) {
+                    break;
+                }
+            } else {
+                uint8_t hash[32];
+                cryptonight_hash(hash, board->nonce, 76);
+                applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(hash, 32), abin2hex(board->hash, 32));
+
             }
         }
 
@@ -774,6 +776,12 @@ static bool stratum_handle_response(char *buf) {
 
 void restart_threads(void) {
     work_restart[0].restart = 1;
+}
+
+static void *test_stratum_thread(void *userdata) {
+    memcpy(g_work.data, test_data, 76);
+    memcpy(g_work.target + 6, test_target, 8);
+    return NULL;
 }
 
 static void *stratum_thread(void *userdata) {
@@ -919,6 +927,17 @@ void parse_arg(int key, char *arg) {
             nonce_path = (char *) calloc(p - arg + 1, 1);
             strncpy(nonce_path, arg, p - arg);
             nonce_speed = (uint32_t) strtol(strdup(++p), NULL, 10);
+            break;
+        case 1014:
+            free(test_data);
+            test_data = (uint8_t *) calloc(1, 76);
+            hex2bin(test_data, arg, 76);
+            opt_test = true;
+            break;
+        case 1015:
+            free(test_target);
+            test_target = (uint8_t *) calloc(1, 8);
+            hex2bin(test_target, arg, 8);
             break;
 //{ "url", 1, NULL, 'o' },
         case 'o': {            /* --url */
@@ -1115,20 +1134,6 @@ void parse_config(json_t *config) {
     }
 }
 
-static void parse_cmdline(int argc, char *argv[]) {
-    int key;
-
-    while (1) {
-        key = getopt_long(argc, argv, short_options, options, NULL);
-        if (key < 0)
-            break;
-        parse_arg(key, optarg);
-    }
-    if (optind < argc) {
-        applog(LOG_ERR, "%s: unsupported non-option argument -- '%s'", argv[0], argv[optind]);
-        show_usage_and_exit(1);
-    }
-}
 
 static void signal_handler(int sig) {
     switch (sig) {
@@ -1171,6 +1176,7 @@ int main(int argc, char *argv[]) {
     parse_arg('c', defconfig);
 
     opt_uart = cmd_speed && nonce_speed;
+
     if (opt_algo == ALGO_XMR)
         jsonrpc_2 = true;
 
@@ -1218,8 +1224,10 @@ int main(int argc, char *argv[]) {
     thr->q = tq_new();
     if (!thr->q)
         return 1;
-
-    err = thread_create(thr, stratum_thread);
+    if (opt_test)
+        err = thread_create(thr, test_stratum_thread);
+    else
+        err = thread_create(thr, stratum_thread);
     if (err) {
         applog(LOG_ERR, "stratum thread create failed");
         return 1;
@@ -1234,12 +1242,14 @@ int main(int argc, char *argv[]) {
         return 1;
 
     if (opt_uart) {
+        applog(LOG_DEBUG, "entering UART miner thread.");
         err = thread_create(thr, uart_miner_thread);
     } else {
         err = thread_create(thr, miner_thread);
     }
 
     if (err) {
+        applog(LOG_DEBUG, "entering CPU miner thread.");
         applog(LOG_ERR, "thread %d create failed", 0);
         return 1;
     }

@@ -28,19 +28,20 @@ uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
     }
 }
 uint8_t board_open_serials(board_t *board, char* cmd_serial_path, uint32_t cmd_serial_speed, char* nonce_serial_path, uint32_t nonce_serial_speed){
+    applog(LOG_DEBUG, "Opening serials");
     if (serial_open_advanced(&board->cmd_serial, cmd_serial_path, cmd_serial_speed, 8, PARITY_MARK, 1, false, false)) {
         applog(LOG_ERR, "cmd_serial error: %s", serial_errmsg(&board->cmd_serial));
         serial_close(&board->cmd_serial);
         serial_close(&board->nonce_serial);
-        exit(1);
+        return 0;
     }
     if (serial_open_advanced(&board->nonce_serial, nonce_serial_path, nonce_serial_speed, 8, PARITY_MARK, 1, false, false)) {
         applog(LOG_ERR, "nonce_serial error: %s", serial_errmsg(&board->nonce_serial));
         serial_close(&board->cmd_serial);
         serial_close(&board->nonce_serial);
-        exit(1);
+        return 0;
     }
-    return 0;
+    return 1;
 }
 uint8_t board_write_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t* src){
 // read a chip's certain reg
@@ -110,8 +111,9 @@ uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t*
     return 0;
 }
 uint8_t board_assign_nonce(board_t *board){
-//    uint32_t nonce_step = 0xffffffffU / board->chip_nums;
-    uint32_t nonce_step = 0x01000000U;
+    applog(LOG_DEBUG, "Assigning nonce");
+    uint32_t nonce_step = 0xffffffffU / board->chip_nums;
+//    uint32_t nonce_step = 0x01000000U;
     uint32_t nonce = 0x00000000U;
     for (uint8_t i = 1; i <= board->chip_nums; ++i) {
         le32enc(&board->chip_array[i].start_nonce,nonce);
@@ -124,7 +126,9 @@ uint8_t board_assign_nonce(board_t *board){
     return 0;
 }
 uint8_t board_init_chip_array(board_t *board){
-    board_open_serials(board, cmd_path, cmd_speed, nonce_path, nonce_speed);
+    applog(LOG_DEBUG, "Start initiate board");
+    if (!board_open_serials(board, cmd_path, cmd_speed, nonce_path, nonce_speed))
+        exit(1);
     uint8_t data_in = 0x80;
     uint8_t* buf = malloc(1);
     serial_set_parity(&board->cmd_serial, PARITY_MARK);
@@ -150,11 +154,12 @@ uint8_t board_init_chip_array(board_t *board){
         board_write_reg(board, 0, CYCLES_REG, cycle_reg);
     }
     board_assign_nonce(board);
+    applog(LOG_DEBUG, "writing to core sel");
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
-    for (uint8_t j = 1; j <= board->chip_nums; ++j) {
+    for (uint8_t j = 1; j <= board->chip_nums; ++j)
         board_start_self_test(board, j);
-    }
+    applog(LOG_DEBUG, "writing to core sel");
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
     return 0;
 }
@@ -164,6 +169,7 @@ uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
     //             1      0       0       1       1       0       0       0
     //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH  RESTART   ERR
     //             1      0       0       0       0       0       0       0
+    applog(LOG_DEBUG, "Start self test");
     uint8_t test_cmd[2]={0xC8, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, test_cmd);
     sleep(1);
@@ -180,15 +186,17 @@ uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
     return 0;
 }
 uint8_t board_set_target(board_t *board){
-    applog(LOG_DEBUG, "writing target to board.");
+    applog(LOG_DEBUG, "Sending target to board");
     board_write_reg(board, 0, TARGET_REG, board->chip_array->target);
     return 0;
 }
 uint8_t board_set_data_in(board_t *board, uint8_t chip_id){
+    applog(LOG_DEBUG, "Sending new data to board");
     board_write_reg(board, chip_id, DATA_IN_REG, board->chip_array[chip_id].data_in);
     return 0;
 }
 uint8_t board_set_workid(board_t *board, uint8_t chip_id){
+    applog(LOG_DEBUG, "Sending workid to board");
     board_write_reg(board, chip_id, WORK_ID_REG, board->chip_array[chip_id].work_id);
     return 0;
 }
@@ -200,6 +208,7 @@ uint8_t board_reset(board_t *board, uint8_t chip_id) {
     //             1      0       0       1       0       0       0       0
     //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH   RESART   ERR
     //             1      0       0       0       0       0       0       0
+    applog(LOG_DEBUG, "Sending reset command to %d", chip_id);
     uint8_t reset_cmd[2] = {0x90, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
     return 0;
@@ -211,6 +220,7 @@ uint8_t board_start(board_t *board, uint8_t chip_id) {
     //             1      1       0       1       0       0       0       0
     //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH   RESET    ERR
     //             1      0       0       0       0       1       0       0
+    applog(LOG_DEBUG, "Sending start command to %d", chip_id);
     uint8_t start_cmd[2] = {0xC0, 0x80};
     board_write_reg(board, chip_id, CTRL_REG, start_cmd);
     return 0;
@@ -219,7 +229,6 @@ uint8_t board_wait_for_nonce(board_t *board){
     uint8_t buf_len = (uint8_t) (jsonrpc_2 ? 38 : 7);
     uint8_t serial_data[buf_len];
     uint8_t check_sum=0x00;
-
     if (serial_read(&board->nonce_serial, serial_data, buf_len, 100) > 0) {
         for (int i = 0; i < buf_len - 1; ++i)
             check_sum ^= serial_data[i];
@@ -289,6 +298,7 @@ uint8_t board_flush_fifo(board_t *board, uint8_t chip_id){
     //             1      0       0       0       0       0       0       0
     //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH  RESTART   ERR
     //             1      0       0       0       0       1       0       0
+    applog(LOG_DEBUG, "Flushing FIFO");
     uint8_t reset_cmd[2] = {0x80, 0x84};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
     return 0;

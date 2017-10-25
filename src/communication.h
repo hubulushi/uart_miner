@@ -78,9 +78,7 @@ uint8_t board_open_serials(board_t *board, char* cmd_serial_path, uint32_t cmd_s
 uint8_t board_init_chip_array(board_t *board);
 uint8_t board_write_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t* src);
 uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t* dst);
-
 uint8_t board_reset(board_t *board, uint8_t chip_id);
-
 uint8_t board_start(board_t *board, uint8_t chip_id);
 uint8_t board_assign_nonce(board_t *board);
 uint8_t board_get_nonce_state(board_t *board);

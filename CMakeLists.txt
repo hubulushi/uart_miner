@@ -52,5 +52,4 @@ set(src_directory
 
 set(SOURCE_FILES ${src_directory} ${sha3_directory} ${crypto_directory})
 add_executable(uart_miner ${SOURCE_FILES} src/uart-miner.c)
-add_executable(uart_tester ${SOURCE_FILES} src/uart-tester.c)
 target_link_libraries(uart_miner jansson curl ssl pthread)
