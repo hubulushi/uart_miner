@@ -49,7 +49,6 @@ bool opt_serial_debug = false;
 bool opt_stratum_debug = false;
 bool opt_uart = false;
 bool opt_test = false;
-bool opt_quiet = false;
 int opt_maxlograte = 5;
 long opt_proxy_type;
 bool opt_redirect = true;
@@ -92,66 +91,42 @@ size_t rpc2_bloblen = 0;
 uint32_t rpc2_target = 0;
 char *rpc2_job_id = NULL;
 
-static char const usage[] = "\
-Usage:  [OPTIONS]\n\
-Options:\n\
-  -a, --algo=ALGO       specify the algorithm to use\n\
-                          x11          X11\n\
-                          xmr          xmr\n\
-      --cmd-path=cmdpath:speed  specify the cmd path and speed\n\
-      --nonce-path=noncepath:speed spcify the nonce path and speed\n\
-  -o, --url=URL         URL of mining server\n\
-  -O, --userpass=U:P    username:password pair for mining server\n\
-      --cert=FILE       certificate for mining server using SSL\n\
-  -x, --proxy=[PROTOCOL://]HOST[:PORT]  connect through a proxy\n\
-  -r, --retries=N       number of times to retry if a network call fails\n\
-                          (default: retry indefinitely)\n\
-  -R, --retry-pause=N   time to pause between retries, in seconds (default: 30)\n\
-      --time-limit=N    maximum time [s] to mine before exiting the program.\n\
-  -T, --timeout=N       timeout for long poll and stratum (default: 300 seconds)\n\
-  -s, --scantime=N      upper bound on time spent scanning current work when\n\
-                          long polling is unavailable, in seconds (default: 5)\n\
-      --randomize       Randomize scan range start to reduce duplicates\n\
-  -f, --diff-factor     Divide req. difficulty by this factor (std is 1.0)\n\
-  -m, --diff-multiplier Multiply difficulty by this factor (std is 1.0)\n\
-  -q, --quiet           disable per-thread hashmeter output\n\
-  -D, --debug           enable debug output\n\
-      --benchmark       run in offline benchmark mode\n\
-      --cputest         debug hashes from cpu algorithms\n\
-      --max-temp=N      Only mine if cpu temp is less than specified value (linux)\n\
-      --max-rate=N[KMG] Only mine if net hashrate is less than specified value\n\
-      --max-diff=N      Only mine if net difficulty is less than specified value\n\
-  -c, --config=FILE     load a JSON-format configuration file\n\
-  -h, --help            display this help text and exit\n\
-";
+static char const usage[] = ""
+        "[USAGE] " PACKAGE_NAME " config_file(url or path)\n"
+        "sample config path:\n"
+        "{\n"
+        "    \"algo\":\"xmr\",\n"
+        "    \"cert\":\"./demo.crt\"\n"
+        "    \"url\":\"stratum+tcp://path.to.poll\",\n"
+        "    \"userpass\":\"user:pass\",\n"
+        "    \"cmd-path\":\"path:baudrate\",\n"
+        "    \"nonce-path\":\"path:baudrate\",\n"
+        "    \"test_data\":\"0606abd0afce05d0dee05fac0f65305a345a72a5cc39ed588293e8c86ae50f61f11fad4abd0b435700000097c78deccf06247dfec13065cfb51cb395455c39fbc742f65aafed045b70117b08\",\n"
+        "    \"test_target\":\"ffffffffffffff00\",\n"
+        "    \"debug\":true,\n"
+        "    \"serial_debug\":true,\n"
+        "    \"stratum_debug\":true\n"
+        "}\n";
 
-static char const short_options[] = "a:b:Bc:CDf:hm:n:p:Px:qr:R:s:t:T:o:u:O:V";
 
 static struct option const options[] = {
-        {"algo",            1, NULL, 'a'},
-        {"cmd-path",        1, NULL, 1010},
-        {"nonce-path",      1, NULL, 1011},
-        {"test_data",       1, NULL, 1014},
-        {"test_target",     1, NULL, 1015},
-        {"url",             1, NULL, 'o'},
-        {"userpass",        1, NULL, 'O'},
-        {"cert",            1, NULL, 1001},
-        {"proxy",           1, NULL, 'x'},
-        {"retries",         1, NULL, 'r'},
-        {"retry-pause",     1, NULL, 'R'},
-        {"time-limit",      1, NULL, 1008},
-        {"timeout",         1, NULL, 'T'},
-        {"scantime",        1, NULL, 's'},
-        {"randomize",       0, NULL, 1024},
-        {"diff-factor",     1, NULL, 'f'},
-        {"diff-multiplier", 1, NULL, 'm'},
-        {"quiet",           0, NULL, 'q'},
-        {"debug",           0, NULL, 'D'},
-        {"serial_debug",    0, NULL, 1012},
-        {"stratum_debug",   0, NULL, 1013},
-        {"config",          1, NULL, 'c'},
-        {"help",            0, NULL, 'h'},
-        {0,                 0, 0,    0}
+        {"algo",          1, NULL, 1000},
+        {"cert",          1, NULL, 1001},
+        {"cmd-path",      1, NULL, 1002},
+        {"nonce-path",    1, NULL, 1003},
+        {"test_data",     1, NULL, 1004},
+        {"test_target",   1, NULL, 1005},
+        {"url",           1, NULL, 1006},
+        {"userpass",      1, NULL, 1007},
+        {"time-limit",    1, NULL, 1008},
+        {"proxy",         1, NULL, 1009},
+        {"retries",       1, NULL, 1010},
+        {"retry-pause",   1, NULL, 1011},
+        {"serial_debug",  0, NULL, 1012},
+        {"stratum_debug", 0, NULL, 1013},
+        {"timeout",       1, NULL, 1014},
+        {"debug",         0, NULL, 1015},
+        {0,               0, 0,    0}
 };
 
 static work_t g_work = {{0}};
@@ -200,8 +175,6 @@ bool rpc2_login(CURL *curl) {
 
     if (!val)
         goto end;
-
-//	applog(LOG_DEBUG, "JSON value: %s", json_dumps(val, 0));
 
     rc = rpc2_login_decode(val);
 
@@ -603,7 +576,7 @@ static void *miner_thread(void *userdata) {
             thr_hashrates[thr_id] = hashes_done / (diff.tv_sec + diff.tv_usec * 1e-6);
             pthread_mutex_unlock(&stats_lock);
         }
-        if (!opt_quiet && (time(NULL) - tm_rate_log) > opt_maxlograte) {
+        if ((time(NULL) - tm_rate_log) > opt_maxlograte) {
             sprintf(s, thr_hashrates[thr_id] >= 1e6 ? "%.0f" : "%.2f",
                     thr_hashrates[thr_id] / 1e3);
             applog(LOG_INFO, "CPU #%d: %s kH/s", thr_id, s);
@@ -783,6 +756,8 @@ void restart_threads(void) {
 }
 
 static void *test_stratum_thread(void *userdata) {
+    struct thr_info *mythr = (struct thr_info *) userdata;
+
     memcpy(g_work.data, test_data, 76);
     memcpy(g_work.target + 6, test_target, 8);
     return NULL;
@@ -834,7 +809,7 @@ static void *stratum_thread(void *userdata) {
 
             if (stratum.job.clean || jsonrpc_2) {
                 static int last_bloc_height;
-                if (!opt_quiet && last_bloc_height != stratum.bloc_height) {
+                if (last_bloc_height != stratum.bloc_height) {
                     last_bloc_height = stratum.bloc_height;
                     if (net_diff > 0.)
                         applog(LOG_INFO, "%s block %d, diff %.3f", algo_names[opt_algo],
@@ -844,7 +819,7 @@ static void *stratum_thread(void *userdata) {
                                stratum.bloc_height);
                 }
                 restart_threads();
-            } else if (opt_debug && !opt_quiet) {
+            } else if (opt_debug) {
                 applog(LOG_INFO, "%s asks job %lu for block %d", short_url,
                        strtoul(stratum.job.job_id, NULL, 16), stratum.bloc_height);
             }
@@ -870,10 +845,7 @@ static void *stratum_thread(void *userdata) {
 }
 
 static void show_usage_and_exit(int status) {
-    if (status)
-        applog(LOG_ERR, "Try `" PACKAGE_NAME " --help' for more information.\n");
-    else
-        printf(usage);
+    printf(usage);
     exit(status);
 }
 
@@ -883,13 +855,12 @@ static void strhide(char *s) {
 }
 
 void parse_arg(int key, char *arg) {
-//    TODO: need to be more clear
     char *p;
     int v, i;
 
     switch (key) {
-//{ "algo", 1, NULL, 'a' },
-        case 'a':
+//{ "algo", 1, NULL, 1000 },
+        case 1000:
             for (i = 0; i < ALGO_COUNT; i++) {
                 v = (int) strlen(algo_names[i]);
                 if (v && !strncasecmp(arg, algo_names[i], (size_t) v)) {
@@ -899,7 +870,6 @@ void parse_arg(int key, char *arg) {
                     }
                 }
             }
-
             if (i == ALGO_COUNT) {
                 if (strstr(arg, ":")) {
                     char *nf = strstr(arg, ":");
@@ -908,8 +878,13 @@ void parse_arg(int key, char *arg) {
                 show_usage_and_exit(1);
             }
             break;
-//{ "cmd-path", 1, NULL, 1010 },
-        case 1010:
+//{ "cert", 1, NULL, 1001 },
+        case 1001:
+            free(opt_cert);
+            opt_cert = strdup(arg);
+            break;
+//{ "cmd-path", 1, NULL, 1002 },
+        case 1002:
             p = strchr(arg, ':');
             if (!p) {
                 applog(LOG_ERR, "invalid path/to/cmd:speed -- '%s'\n", arg);
@@ -920,8 +895,8 @@ void parse_arg(int key, char *arg) {
             strncpy(cmd_path, arg, p - arg);
             cmd_speed = (uint32_t) strtol(strdup(++p), NULL, 10);
             break;
-//{ "nonce-path", 1, NULL, 1011},
-        case 1011:
+//{ "nonce-path", 1, NULL, 1003},
+        case 1003:
             p = strchr(arg, ':');
             if (!p) {
                 applog(LOG_ERR, "invalid path/to/nonce:speed -- '%s'\n", arg);
@@ -932,19 +907,21 @@ void parse_arg(int key, char *arg) {
             strncpy(nonce_path, arg, p - arg);
             nonce_speed = (uint32_t) strtol(strdup(++p), NULL, 10);
             break;
-        case 1014:
+//{"test_data",       1, NULL, 1004},
+        case 1004:
             free(test_data);
             test_data = (uint8_t *) calloc(1, 76);
             hex2bin(test_data, arg, 76);
             opt_test = true;
             break;
-        case 1015:
+//{"test_target",     1, NULL, 1005},
+        case 1005:
             free(test_target);
             test_target = (uint8_t *) calloc(1, 8);
             hex2bin(test_target, arg, 8);
             break;
-//{ "url", 1, NULL, 'o' },
-        case 'o': {            /* --url */
+//{ "url", 1, NULL, 1006 },
+        case 1006: {            /* --url */
             char *ap, *hp;
             ap = strstr(arg, "://");
             ap = ap ? ap + 3 : arg;
@@ -996,8 +973,8 @@ void parse_arg(int key, char *arg) {
             }
             break;
         }
-//{ "userpass", 1, NULL, 'O' },
-        case 'O':            /* --userpass */
+//{ "userpass", 1, NULL, 1007 },
+        case 1007:            /* --userpass */
             p = strchr(arg, ':');
             if (!p) {
                 applog(LOG_ERR, "invalid username:password pair -- '%s'\n", arg);
@@ -1012,13 +989,11 @@ void parse_arg(int key, char *arg) {
             rpc_pass = strdup(++p);
             strhide(p);
             break;
-//{ "cert", 1, NULL, 1001 },
-        case 1001:
-            free(opt_cert);
-            opt_cert = strdup(arg);
-            break;
-//{ "proxy", 1, NULL, 'x' },
-        case 'x':            /* --proxy */
+//{ "time-limit", 1, NULL, 1008 },
+        case 1008:
+            opt_time_limit = atoi(arg);
+//{ "proxy", 1, NULL, 1009 },
+        case 1009:            /* --proxy */
             if (!strncasecmp(arg, "socks4://", 9))
                 opt_proxy_type = CURLPROXY_SOCKS4;
             else if (!strncasecmp(arg, "socks5://", 9))
@@ -1034,38 +1009,19 @@ void parse_arg(int key, char *arg) {
             free(opt_proxy);
             opt_proxy = strdup(arg);
             break;
-//{ "retries", 1, NULL, 'r' },
-        case 'r':
+//{ "retries", 1, NULL, 1010 },
+        case 1010:
             v = atoi(arg);
             if (v < -1 || v > 9999) /* sanity check */
                 show_usage_and_exit(1);
             opt_retries = v;
             break;
-//{ "retry-pause", 1, NULL, 'R' },
-        case 'R':
+//{ "retry-pause", 1, NULL, 1011 },
+        case 1011:
             v = atoi(arg);
             if (v < 1 || v > 9999) /* sanity check */
                 show_usage_and_exit(1);
             opt_fail_pause = (uint8_t) v;
-            break;
-//{ "time-limit", 1, NULL, 1008 },
-        case 1008:
-            opt_time_limit = atoi(arg);
-            break;
-//{ "timeout", 1, NULL, 'T' },
-        case 'T':
-            v = atoi(arg);
-            if (v < 1 || v > 99999) /* sanity check */
-                show_usage_and_exit(1);
-            opt_timeout = v;
-            break;
-//{ "quiet", 0, NULL, 'q' },
-        case 'q':
-            opt_quiet = true;
-            break;
-//{ "debug", 0, NULL, 'D' },
-        case 'D':
-            opt_debug = true;
             break;
 //{"serial_debug",    0, NULL, 1012},
         case 1012:
@@ -1075,32 +1031,40 @@ void parse_arg(int key, char *arg) {
         case 1013:
             opt_stratum_debug = true;
             break;
-//{ "config", 1, NULL, 'c' },
-        case 'c': {
-            json_error_t err;
-            json_t *config;
-            if (arg && strstr(arg, "://")) {
-                config = json_load_url(arg, &err);
-            } else {
-                config = JSON_LOADF(arg, &err);
-            }
-            if (!json_is_object(config)) {
-                if (err.line < 0)
-                    applog(LOG_ERR, "%s\n", err.text);
-                else
-                    applog(LOG_ERR, "%s:%d: %s\n", arg, err.line, err.text);
-                exit(1);
-            } else {
-                parse_config(config);
-                json_decref(config);
-            }
+//{ "timeout", 1, NULL, 1014 },
+        case 1014:
+            v = atoi(arg);
+            if (v < 1 || v > 99999) /* sanity check */
+                show_usage_and_exit(1);
+            opt_timeout = v;
             break;
-        }
-//{ "help", 0, NULL, 'h' },
-        case 'h':
-            show_usage_and_exit(0);
+//{ "debug", 0, NULL, 1015 },
+        case 1015:
+            opt_debug = true;
+            break;
+//never happen
         default:
-            show_usage_and_exit(1);
+            return;
+    }
+}
+
+void parse_path(char *arg) {
+    json_error_t err;
+    json_t *config;
+    if (arg && strstr(arg, "://")) {
+        config = json_load_url(arg, &err);
+    } else {
+        config = JSON_LOADF(arg, &err);
+    }
+    if (!json_is_object(config)) {
+        if (err.line < 0)
+            applog(LOG_ERR, "%s\n", err.text);
+        else
+            applog(LOG_ERR, "%s:%d: %s\n", arg, err.line, err.text);
+        exit(1);
+    } else {
+        parse_config(config);
+        json_decref(config);
     }
 }
 
@@ -1173,11 +1137,11 @@ int main(int argc, char *argv[]) {
     int err;
 
     pthread_mutex_init(&applog_lock, NULL);
-
+    if (argc == 1) show_usage_and_exit(1);
     // try default config file in binary folder
     char defconfig[PATH_MAX] = {0};
     get_defconfig_path(defconfig, PATH_MAX, argv[0], argv[1]);
-    parse_arg('c', defconfig);
+    parse_path(defconfig);
 
     opt_uart = cmd_speed && nonce_speed;
 

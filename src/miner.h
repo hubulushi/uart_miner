@@ -221,7 +221,6 @@ struct work_restart {
 extern bool opt_debug;
 extern bool opt_serial_debug;
 extern bool opt_stratum_debug;
-extern bool opt_quiet;
 extern bool opt_redirect;
 extern int opt_timeout;
 extern bool opt_stratum_stats;

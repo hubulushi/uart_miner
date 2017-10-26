@@ -126,18 +126,16 @@ void applog(int prio, const char *fmt, ...) {
 
 /* Get default config.json path (will be system specific) */
 void get_defconfig_path(char *out, size_t bufsize, char *argv0, char *argv1) {
+
     char *cmd = strdup(argv0);
     char *cmd_path = dirname(cmd);
-
     char *conf = strdup(argv1);
-    struct stat info = {0};
-    if (strstr(conf, "://") || strstr(conf, "/") == conf) {
+
+    if (strstr(conf, "://") || strstr(conf, "/") == conf)
         snprintf(out, bufsize, "%s", conf);
-    } else if (conf && stat(out, &info) != 0) {
+    else
         snprintf(out, bufsize, "%s/%s", cmd_path, conf);
-    } else {
-        snprintf(out, bufsize, "%suart_miner.json", cmd_path);
-    }
+
     applog(LOG_INFO, "using config: %s", out);
     out[bufsize - 1] = '\0';
 }
@@ -1621,7 +1619,7 @@ bool stratum_handle_method(struct stratum_ctx *sctx, const char *s) {
     }
     if (!strcasecmp(method, "client.get_algo")) {
         // will prevent wrong algo parameters on a pool, will be used as test on rejects
-        if (!opt_quiet) applog(LOG_NOTICE, "Pool asked your algo parameter");
+        applog(LOG_NOTICE, "Pool asked your algo parameter");
         ret = stratum_get_algo(sctx, id, params);
         goto out;
     }
@@ -1918,10 +1916,7 @@ bool rpc2_job_decode(const json_t *job, struct work *work) {
             hashrate += thr_hashrates[0];
             pthread_mutex_unlock(&stats_lock);
             double difficulty = (((double) 0xffffffff) / target);
-            if (!opt_quiet) {
-                // xmr pool diff can change a lot...
-                applog(LOG_WARNING, "Stratum difficulty set to %g", difficulty);
-            }
+            applog(LOG_INFO, "Stratum difficulty set to %g", difficulty);
             stratum_diff = difficulty;
             rpc2_target = target;
         }
