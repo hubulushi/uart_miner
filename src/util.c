@@ -91,7 +91,7 @@ void applog(int prio, const char *fmt, ...) {
             color = CL_WHT;
             break;
         case LOG_INFO:
-            color = CL_GRY;
+            color = CL_N;
             break;
         case LOG_SERIAL:
             if (!opt_serial_debug) return;

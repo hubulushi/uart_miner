@@ -278,9 +278,13 @@ static bool submit_upstream_work(work_t *work) {
     }
     // store to keep/display solved blocks (work struct not linked on accept notification)
 
-    if (unlikely(!stratum_send_line(&stratum, s))) {
-        applog(LOG_ERR, "submit_upstream_work stratum_send_line failed");
-        goto out;
+    if (opt_test)
+        applog(LOG_INFO, "[TESTER_SUBMIT] %s", s);
+    else {
+        if (unlikely(!stratum_send_line(&stratum, s))) {
+            applog(LOG_ERR, "submit_upstream_work stratum_send_line failed");
+            goto out;
+        }
     }
     rc = true;
 
@@ -694,21 +698,18 @@ static void *uart_miner_thread(void *userdata) {
         pthread_mutex_unlock(&g_work_lock);
 
         if (board_wait_for_nonce(board)) {
-            if (!opt_test) {
-                nonce_cnt++;
-                work_t upload_work = jsonrpc_2 ? work : work_list[*board->work_id];
-                memcpy(((uint8_t *) upload_work.data + nonce_offset), board->nonce, 4);
-                if (jsonrpc_2)
-                    memcpy(upload_work.hash, board->hash, 32);
-                if (!submit_work(mythr, &upload_work)) {
-                    break;
+            nonce_cnt++;
+            work_t upload_work = jsonrpc_2 ? work : work_list[*board->work_id];
+            memcpy(((uint8_t *) upload_work.data + nonce_offset), board->nonce, 4);
+            if (jsonrpc_2) {
+                if (opt_test) {
+                    cryptonight_hash(upload_work.hash, upload_work.data, 76);
+                    applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(upload_work.hash, 32), abin2hex(board->hash, 32));
                 }
-            } else {
-                uint8_t hash[32];
-                cryptonight_hash(hash, board->nonce, 76);
-                applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(hash, 32), abin2hex(board->hash, 32));
-
+                memcpy(upload_work.hash, board->hash, 32);
             }
+            if (!submit_work(mythr, &upload_work))
+                break;
         }
 
 //          for every second
@@ -716,7 +717,7 @@ static void *uart_miner_thread(void *userdata) {
         timeval_subtract(&diff, &tv_now, &tv_start);
         if (diff.tv_sec > 1) {
 //            get fifo status
-            if (!jsonrpc_2) {
+            if (!jsonrpc_2 && !opt_test) {
                 for (uint8_t j = 1; j <= board->chip_nums; ++j) {
                     regen_work = (uint8_t) (regen_work || board_get_fifo(board, j));
                 }
