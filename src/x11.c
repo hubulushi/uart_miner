@@ -13,7 +13,7 @@
 #include "../sha3/sph_echo.h"
 
 
-void x11hash(void *output, const void *input)
+void x11_hash(void *output, const void *input)
 {
 	sph_blake512_context     ctx_blake;
 	sph_bmw512_context       ctx_bmw;
@@ -95,7 +95,7 @@ int scanhash_x11(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *ha
 
 	do {
 		be32enc(&endiandata[19], nonce);
-		x11hash(hash, endiandata);
+        x11_hash(hash, endiandata);
 
 		if (hash[7] <= Htarg && fulltest(hash, ptarget)) {
 			pdata[19] = nonce;

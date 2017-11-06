@@ -230,7 +230,7 @@ static bool submit_upstream_work(work_t *work) {
         if (opt_uart)
             memcpy(hash, work->hash, 32);
         else
-            cryptonight_hash(hash, work->data, 76);
+            cryptonight_hash(hash, work->data);
         char *hashhex = abin2hex(hash, 32);
         snprintf(s, JSON_BUF_LEN,
                  "{\"method\": \"submit\", \"params\": {\"id\": \"%s\", \"job_id\": \"%s\", \"nonce\": \"%s\", \"result\": \"%s\"}, \"id\":4}\r\n",
@@ -481,6 +481,7 @@ static void *miner_thread(void *userdata) {
     time_t firstwork_time = 0;
     char s[16];
     memset(&work, 0, sizeof(work));
+
     while (1) {
         uint64_t hashes_done;
         struct timeval tv_start, tv_end, diff;
@@ -500,15 +501,11 @@ static void *miner_thread(void *userdata) {
         pthread_mutex_lock(&g_work_lock);
 
         // to clean: is g_work loaded before the memcmp ?
-        regen_work = regen_work || ((*nonceptr) >= end_nonce
-                                    && !(memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], (size_t) wkcmp_sz) ||
-                                         jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0));
+        regen_work = regen_work || ((*nonceptr) >= end_nonce && !(memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], (size_t) wkcmp_sz) || jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0));
         if (regen_work) {
             stratum_gen_work(&stratum, &g_work);
         }
-
-        if (memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], (size_t) wkcmp_sz) ||
-            jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0) {
+        if (memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], (size_t) wkcmp_sz) || jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0) {
             work_free(&work);
             work_copy(&work, &g_work);
             nonceptr = (uint32_t *) (((char *) work.data) + nonce_oft);
@@ -563,6 +560,9 @@ static void *miner_thread(void *userdata) {
                 break;
             case ALGO_X11:
                 rc = scanhash_x11(thr_id, &work, max_nonce, &hashes_done);
+                break;
+            case ALGO_SCRYPT:
+                rc = scanhash_scrypt(thr_id, &work, max_nonce, &hashes_done);
                 break;
             default:
                 goto out;
@@ -674,12 +674,24 @@ static void *uart_miner_thread(void *userdata) {
             nonce_cnt++;
             work_t upload_work = jsonrpc_2 ? work : work_list[*board->work_id];
             memcpy(((uint8_t *) upload_work.data + nonce_offset), board->nonce, 4);
-            if (jsonrpc_2) {
-                if (opt_test) {
-                    cryptonight_hash(upload_work.hash, upload_work.data, 76);
-                    applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(upload_work.hash, 32), abin2hex(board->hash, 32));
-                }
+            if (jsonrpc_2)
                 memcpy(upload_work.hash, board->hash, 32);
+
+            if (opt_test) {
+                switch (opt_algo) {
+                    case ALGO_X11:
+                        cryptonight_hash(upload_work.hash, upload_work.data);
+                        break;
+                    case ALGO_XMR:
+                        x11_hash(upload_work.hash, upload_work.data);
+                        break;
+                    case ALGO_SCRYPT:
+                        scrypt_hash(upload_work.hash, upload_work.data);
+                    default:
+//                        should never happen
+                        exit(-1);
+                }
+                applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(upload_work.hash, 32), abin2hex(board->hash, 32));
             }
             if (!submit_work(mythr, &upload_work))
                 break;

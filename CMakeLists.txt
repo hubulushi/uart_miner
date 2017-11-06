@@ -43,6 +43,7 @@ set(sha3_directory
 set(src_directory
         src/sha2.c
         src/x11.c
+        src/scrypt.c
         src/cryptonight.c
         src/serial.c
         src/util.c

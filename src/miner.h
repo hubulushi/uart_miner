@@ -239,10 +239,11 @@ extern double net_diff;
 enum algos {
     ALGO_X11,         /* X11 */
     ALGO_XMR,
+    ALGO_SCRYPT,
     ALGO_COUNT
 };
 
-static const char *algo_names[] = {"x11", "xmr", "\0"};
+static const char *algo_names[] = {"x11", "xmr", "scrypt", "\0"};
 extern enum algos opt_algo;
 
 #define JSON_RPC_LONGPOLL	(1 << 0)
@@ -349,7 +350,15 @@ int scanhash_x11(int thr_id, work_t *work, uint32_t max_nonce, uint64_t *hashes_
 
 int scanhash_cryptonight(int thr_id, work_t *work, uint32_t max_nonce, uint64_t *hashes_done);
 
-void cryptonight_hash(void *output, const void *input, int len);
+int scanhash_scrypt(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
+
+void x11_hash(void *output, const void *input);
+
+void cryptonight_hash(void *output, const void *input);
+
+void scrypt_hash(void *output, const void *input);
+
+unsigned char *scrypt_buffer_alloc(int N);
 
 bool fulltest(const uint32_t *hash, const uint32_t *target);
 

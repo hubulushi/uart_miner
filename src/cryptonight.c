@@ -123,9 +123,8 @@ struct cryptonight_ctx {
 	oaes_ctx* aes_ctx;
 };
 
-static void cryptonight_hash_ctx(void* output, const void* input, int len, struct cryptonight_ctx* ctx)
-{
-	hash_process(&ctx->state.hs, (const uint8_t*) input, len);
+static void cryptonight_hash_ctx(void *output, const void *input, struct cryptonight_ctx *ctx) {
+    hash_process(&ctx->state.hs, (const uint8_t *) input, 76);
 	ctx->aes_ctx = (oaes_ctx*) oaes_alloc();
 	size_t i, j;
 	memcpy(ctx->text, ctx->state.init, INIT_SIZE_BYTE);
@@ -192,9 +191,9 @@ static void cryptonight_hash_ctx(void* output, const void* input, int len, struc
 	oaes_free((OAES_CTX **) &ctx->aes_ctx);
 }
 
-void cryptonight_hash(void* output, const void* input, int len) {
+void cryptonight_hash(void *output, const void *input) {
 	struct cryptonight_ctx *ctx = (struct cryptonight_ctx*)malloc(sizeof(struct cryptonight_ctx));
-	cryptonight_hash_ctx(output, input, len, ctx);
+    cryptonight_hash_ctx(output, input, ctx);
 	free(ctx);
 }
 
@@ -212,7 +211,7 @@ int scanhash_cryptonight(int thr_id, struct work *work, uint32_t max_nonce, uint
 
 	do {
 		*nonceptr = ++n;
-		cryptonight_hash_ctx(hash, pdata, 76, ctx);
+        cryptonight_hash_ctx(hash, pdata, ctx);
 		if (unlikely(hash[7] < ptarget[7])) {
 			work_set_target_ratio(work, hash);
 			*hashes_done = n - first_nonce + 1;
