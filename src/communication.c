@@ -4,6 +4,7 @@ uint8_t reg_size[24]= {1, 4, 2, 2, 76, 64, 2, 4, 4, 1, 1, 8, 4, 32, 32, 4, 4, 1,
 extern long nonce_cnt;
 extern char *cmd_path, *nonce_path;
 extern uint32_t cmd_speed, nonce_speed;
+extern uint8_t opt_cycle;
 
 uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
     // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
@@ -150,8 +151,8 @@ uint8_t board_init_chip_array(board_t *board){
     board->current_chip = 0xFF;
     board_reset(board, 0);
     if (!jsonrpc_2) {
-        uint8_t cycle_reg[1] = {0x4E};
-        board_write_reg(board, 0, CYCLES_REG, cycle_reg);
+        board_write_reg(board, 0, CYCLES_REG, &opt_cycle);
+        applog(LOG_DEBUG, "Chip cycle set to %d", opt_cycle);
     }
     board_assign_nonce(board);
     applog(LOG_DEBUG, "writing to core sel");

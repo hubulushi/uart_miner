@@ -55,7 +55,6 @@ bool opt_redirect = true;
 bool opt_stratum_stats = false;
 static int opt_retries = -1;
 static uint8_t opt_fail_pause = 10;
-static int opt_time_limit = 0;
 int opt_timeout = 300;
 enum algos opt_algo;
 long nonce_cnt = 1;
@@ -66,6 +65,7 @@ char *cmd_path, *nonce_path;
 uint8_t *test_data;
 uint8_t *test_target;
 uint32_t cmd_speed, nonce_speed;
+uint8_t opt_cycle = 78;
 char *short_url = NULL;
 char *opt_cert;
 char *opt_proxy;
@@ -111,21 +111,27 @@ static char const usage[] = ""
 
 static struct option const options[] = {
         {"algo",          1, NULL, 1000},
-        {"cert",          1, NULL, 1001},
+
         {"cmd-path",      1, NULL, 1002},
         {"nonce-path",    1, NULL, 1003},
-        {"test_data",     1, NULL, 1004},
+        {"chip_cycle",    1, NULL, 1004},
+
         {"test_target",   1, NULL, 1005},
-        {"url",           1, NULL, 1006},
-        {"userpass",      1, NULL, 1007},
-        {"time-limit",    1, NULL, 1008},
-        {"proxy",         1, NULL, 1009},
+        {"test_data",     1, NULL, 1006},
+
+        {"serial_debug",  0, NULL, 1007},
+        {"stratum_debug", 0, NULL, 1008},
+
+        {"url",           1, NULL, 1100},
+        {"userpass",      1, NULL, 1101},
+        {"cert",          1, NULL, 1102},
+        {"proxy",         1, NULL, 1103},
+
         {"retries",       1, NULL, 1010},
         {"retry-pause",   1, NULL, 1011},
-        {"serial_debug",  0, NULL, 1012},
-        {"stratum_debug", 0, NULL, 1013},
-        {"timeout",       1, NULL, 1014},
         {"debug",         0, NULL, 1015},
+
+        {"timeout",       1, NULL, 1014},
         {0,               0, 0,    0}
 };
 
@@ -496,7 +502,7 @@ static void *miner_thread(void *userdata) {
             wkcmp_sz = nonce_oft = 39;
 
         uint32_t *nonceptr = (uint32_t *) (((char *) work.data) + nonce_oft);
-        while (!jsonrpc_2 && time(NULL) >= g_work_time + 120)
+        while (!opt_test && !jsonrpc_2 && time(NULL) >= g_work_time + 120)
             sleep(1);
         pthread_mutex_lock(&g_work_lock);
 
@@ -521,22 +527,6 @@ static void *miner_thread(void *userdata) {
         }
         max64 = LP_SCANTIME;
 
-        /* time limit */
-        if (opt_time_limit && firstwork_time) {
-            int passed = (int) (time(NULL) - firstwork_time);
-            int remain = opt_time_limit - passed;
-            if (remain < 0) {
-                if (thr_id != 0) {
-                    sleep(1);
-                    continue;
-                }
-
-                applog(LOG_NOTICE, "Mining timeout of %ds reached, exiting...", opt_time_limit);
-
-                proper_exit(0);
-            }
-            if (remain < max64) max64 = remain;
-        }
 
         max64 *= (int64_t) thr_hashrates[thr_id];
 
@@ -691,7 +681,10 @@ static void *uart_miner_thread(void *userdata) {
 //                        should never happen
                         exit(-1);
                 }
-                applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(upload_work.hash, 32), abin2hex(board->hash, 32));
+                if (jsonrpc_2)
+                    applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(upload_work.hash, 32), abin2hex(board->hash, 32));
+                else
+                    applog(LOG_DEBUG, "cpu: %s, nonce: %s", abin2hex(upload_work.hash, 32), abin2hex(board->nonce, 4));
             }
             if (!submit_work(mythr, &upload_work))
                 break;
@@ -890,8 +883,8 @@ void parse_arg(int key, char *arg) {
                 show_usage_and_exit(1);
             }
             break;
-//{ "cert", 1, NULL, 1001 },
-        case 1001:
+//{ "cert", 1, NULL, 1102 },
+        case 1102:
             free(opt_cert);
             opt_cert = strdup(arg);
             break;
@@ -919,8 +912,14 @@ void parse_arg(int key, char *arg) {
             strncpy(nonce_path, arg, p - arg);
             nonce_speed = (uint32_t) strtol(strdup(++p), NULL, 10);
             break;
-//{"test_data",       1, NULL, 1004},
+
+//{"chip_cycle",    1, NULL, 1004},
         case 1004:
+            opt_cycle = (uint8_t) atoi(arg);
+            break;
+
+//{"test_data",       1, NULL, 1006},
+        case 1006:
             free(test_data);
             test_data = (uint8_t *) calloc(1, 76);
             hex2bin(test_data, arg, 76);
@@ -932,8 +931,8 @@ void parse_arg(int key, char *arg) {
             test_target = (uint8_t *) calloc(1, 8);
             hex2bin(test_target, arg, 8);
             break;
-//{ "url", 1, NULL, 1006 },
-        case 1006: {            /* --url */
+//{ "url", 1, NULL, 1100 },
+        case 1100: {            /* --url */
             char *ap, *hp;
             ap = strstr(arg, "://");
             ap = ap ? ap + 3 : arg;
@@ -985,8 +984,8 @@ void parse_arg(int key, char *arg) {
             }
             break;
         }
-//{ "userpass", 1, NULL, 1007 },
-        case 1007:            /* --userpass */
+//{ "userpass", 1, NULL, 1101 },
+        case 1101:            /* --userpass */
             p = strchr(arg, ':');
             if (!p) {
                 applog(LOG_ERR, "invalid username:password pair -- '%s'\n", arg);
@@ -1001,11 +1000,8 @@ void parse_arg(int key, char *arg) {
             rpc_pass = strdup(++p);
             strhide(p);
             break;
-//{ "time-limit", 1, NULL, 1008 },
-        case 1008:
-            opt_time_limit = atoi(arg);
-//{ "proxy", 1, NULL, 1009 },
-        case 1009:            /* --proxy */
+//{ "proxy", 1, NULL, 1103 },
+        case 1103:            /* --proxy */
             if (!strncasecmp(arg, "socks4://", 9))
                 opt_proxy_type = CURLPROXY_SOCKS4;
             else if (!strncasecmp(arg, "socks5://", 9))
@@ -1035,12 +1031,12 @@ void parse_arg(int key, char *arg) {
                 show_usage_and_exit(1);
             opt_fail_pause = (uint8_t) v;
             break;
-//{"serial_debug",    0, NULL, 1012},
-        case 1012:
+//{"serial_debug",    0, NULL, 1007},
+        case 1007:
             opt_serial_debug = true;
             break;
-//{"stratum_debug",   0, NULL, 1013},
-        case 1013:
+//{"stratum_debug",   0, NULL, 1008},
+        case 1008:
             opt_stratum_debug = true;
             break;
 //{ "timeout", 1, NULL, 1014 },
@@ -1169,12 +1165,12 @@ int main(int argc, char *argv[]) {
         pthread_mutex_init(&rpc2_job_lock, NULL);
         pthread_mutex_init(&rpc2_login_lock, NULL);
     }
-
-    flags = strncmp(rpc_url, "https:", 6) ? (CURL_GLOBAL_ALL & ~CURL_GLOBAL_SSL) : CURL_GLOBAL_ALL;
-
-    if (curl_global_init(flags)) {
-        applog(LOG_ERR, "CURL initialization failed");
-        return 1;
+    if (!opt_test) {
+        flags = strncmp(rpc_url, "https:", 6) ? (CURL_GLOBAL_ALL & ~CURL_GLOBAL_SSL) : CURL_GLOBAL_ALL;
+        if (curl_global_init(flags)) {
+            applog(LOG_ERR, "CURL initialization failed");
+            return 1;
+        }
     }
 
     /* Always catch Ctrl+C */
@@ -1212,7 +1208,8 @@ int main(int argc, char *argv[]) {
         applog(LOG_ERR, "stratum thread create failed");
         return 1;
     }
-    tq_push(thr_info[2].q, strdup(rpc_url));
+    if (!opt_test)
+        tq_push(thr_info[2].q, strdup(rpc_url));
 
 // open miner thread
     thr = &thr_info[0];

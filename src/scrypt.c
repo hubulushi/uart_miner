@@ -50,7 +50,8 @@ static inline void HMAC_SHA256_80_init(const uint32_t *key, uint32_t *tstate, ui
     /* tstate is assumed to contain the midstate of key */
     memcpy(pad, key + 16, 16);
     memcpy(pad + 4, keypad, 48);
-    sha256_transform(tstate, pad, 0);
+    sha256_transform(tstate, pad, 0);//1
+//    applog(LOG_DEBUG, "[ROUND1] 1:%s", abin2hex(tstate, 32));
     memcpy(ihash, tstate, 32);
 
     sha256_init(ostate);
@@ -58,24 +59,26 @@ static inline void HMAC_SHA256_80_init(const uint32_t *key, uint32_t *tstate, ui
         pad[i] = ihash[i] ^ 0x5c5c5c5c;
     for (; i < 16; i++)
         pad[i] = 0x5c5c5c5c;
-    sha256_transform(ostate, pad, 0);
+    sha256_transform(ostate, pad, 0);//2
+//    applog(LOG_DEBUG, "[ROUND1] 2:%s", abin2hex(ostate, 32));
 
     sha256_init(tstate);
     for (i = 0; i < 8; i++)
         pad[i] = ihash[i] ^ 0x36363636;
     for (; i < 16; i++)
         pad[i] = 0x36363636;
-    sha256_transform(tstate, pad, 0);
+    sha256_transform(tstate, pad, 0);//3
+//    applog(LOG_DEBUG, "[ROUND1] 3:%s", abin2hex(tstate, 32));
 }
 
-static inline void PBKDF2_SHA256_80_128(const uint32_t *tstate,
-                                        const uint32_t *ostate, const uint32_t *salt, uint32_t *output) {
+static inline void PBKDF2_SHA256_80_128(const uint32_t *tstate, const uint32_t *ostate, const uint32_t *salt, uint32_t *output) {
     uint32_t istate[8], ostate2[8];
     uint32_t ibuf[16], obuf[16];
     int i, j;
 
     memcpy(istate, tstate, 32);
     sha256_transform(istate, salt, 0);
+//    applog(LOG_DEBUG, "[ROUND1] 4:%s", abin2hex(istate, 32));
 
     memcpy(ibuf, salt + 16, 16);
     memcpy(ibuf + 5, innerpad, 44);
@@ -85,9 +88,11 @@ static inline void PBKDF2_SHA256_80_128(const uint32_t *tstate,
         memcpy(obuf, istate, 32);
         ibuf[4] = (uint32_t) (i + 1);
         sha256_transform(obuf, ibuf, 0);
+//        applog(LOG_DEBUG, "[ROUND1] %d:%s", 2*i+5,abin2hex(obuf, 32));
 
         memcpy(ostate2, ostate, 32);
         sha256_transform(ostate2, obuf, 0);
+//        applog(LOG_DEBUG, "[ROUND1] %d:%s", 2*i+6,abin2hex(ostate2, 32));
         for (j = 0; j < 8; j++)
             output[8 * i + j] = swab32(ostate2[j]);
     }
@@ -216,31 +221,15 @@ static void scrypt_1024_1_1_256(const uint32_t *input, uint32_t *output, uint32_
     uint32_t tstate[8], ostate[8];
     uint32_t X[32];
     uint32_t *V;
-    applog(LOG_DEBUG, "input:%s", abin2hex((uint8_t *) input, 80));
     V = (uint32_t *) (((uintptr_t) (scratchpad) + 63) & ~(uintptr_t) (63));
 
     memcpy(tstate, midstate, 32);
     HMAC_SHA256_80_init(input, tstate, ostate);
-    applog(LOG_DEBUG, "HMAC_SHA256_80_init:");
-    applog(LOG_DEBUG, "tstate:%s", abin2hex((uint8_t *) tstate, 32));
-    applog(LOG_DEBUG, "ostate:%s", abin2hex((uint8_t *) ostate, 32));
-
     PBKDF2_SHA256_80_128(tstate, ostate, input, X);
-    applog(LOG_DEBUG, "PBKDF2_SHA256_80_128:");
-    applog(LOG_DEBUG, "tstate:%s", abin2hex((uint8_t *) tstate, 32));
-    applog(LOG_DEBUG, "ostate:%s", abin2hex((uint8_t *) ostate, 32));
-    applog(LOG_DEBUG, "X:%s", abin2hex((uint8_t *) X, 128));
 
     scrypt_core(X, V, 1024);
-    applog(LOG_DEBUG, "scrypt_core:");
-    applog(LOG_DEBUG, "X(slat):%s", abin2hex((uint8_t *) X, 128));
 
     PBKDF2_SHA256_128_32(tstate, ostate, X, output);
-    applog(LOG_DEBUG, "PBKDF2_SHA256_128_32:");
-    applog(LOG_DEBUG, "tstate:%s", abin2hex((uint8_t *) tstate, 32));
-    applog(LOG_DEBUG, "ostate:%s", abin2hex((uint8_t *) ostate, 32));
-    applog(LOG_DEBUG, "output:%s", abin2hex((uint8_t *) output, 32));
-    
 }
 
 extern int scanhash_scrypt(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done) {
@@ -259,11 +248,14 @@ extern int scanhash_scrypt(int thr_id, struct work *work, uint32_t max_nonce, ui
 
     memcpy(data, pdata, 80);
     sha256_init(midstate);
-    sha256_transform(midstate, data, 0);
+    sha256_transform(midstate, data, 0);//0
+//    applog(LOG_DEBUG, "[INPUT] %s", abin2hex(data, 80));
+//    applog(LOG_DEBUG, "[ROUND1] 0:%s", abin2hex(midstate, 32));
 
     do {
         data[19] = ++n;
         scrypt_1024_1_1_256(data, hash, midstate, scratchbuf);
+//        applog(LOG_DEBUG, "[HASH] %s", abin2hex(hash,32));
         if (unlikely(hash[7] <= Htarg && fulltest(hash, ptarget))) {
             work_set_target_ratio(work, hash);
             *hashes_done = n - pdata[19] + 1;
