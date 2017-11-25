@@ -706,6 +706,9 @@ void calc_network_diff(work_t *work) {
     net_diff = d;
 }
 
+void nonce_to_diff() {
+}
+
 void diff_to_target(uint32_t *target, double diff) {
     uint64_t m;
     int k;

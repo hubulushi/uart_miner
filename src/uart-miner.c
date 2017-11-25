@@ -466,7 +466,14 @@ static void stratum_gen_work(struct stratum_ctx *sctx, work_t *work) {
         applog(LOG_DEBUG, "generating new xnonce2: job_id='%s' extranonce2=%s ntime=%08x", work->job_id, xnonce2str, swab32(work->data[17]));
         free(xnonce2str);
 
-        work_set_target(work, sctx->job.diff);
+
+        switch (opt_algo) {
+            case ALGO_SCRYPT:
+                work_set_target(work, sctx->job.diff / 65536.0);
+                break;
+            default:
+                work_set_target(work, sctx->job.diff);
+        }
 
         if (stratum_diff != sctx->job.diff) {
             char sdiff[32] = {0};
@@ -610,7 +617,7 @@ static void *uart_miner_thread(void *userdata) {
         nonce_offset = 76;
 
     while (1) {
-        while (!jsonrpc_2 && time(NULL) >= g_work_time + 120)
+        while (!opt_test && !jsonrpc_2 && time(NULL) >= g_work_time + 120)
             sleep(1);
         pthread_mutex_lock(&g_work_lock);
 
@@ -623,7 +630,7 @@ static void *uart_miner_thread(void *userdata) {
 
         regen_work = regen_work || memcmp(&work.data[0], &g_work.data[0], 76);
         if (regen_work) {
-            if (!jsonrpc_2) {
+            if (!jsonrpc_2 && !opt_test) {
                 stratum_gen_work(&stratum, &g_work);
 //    verjion 4*1B   prev_hash 4*8B   merkle_root 4*8B   ntime 4*1B   nbits 4*1B
 //		data_in has changed
@@ -677,6 +684,7 @@ static void *uart_miner_thread(void *userdata) {
                         break;
                     case ALGO_SCRYPT:
                         scrypt_hash(upload_work.hash, upload_work.data);
+                        break;
                     default:
 //                        should never happen
                         exit(-1);

@@ -114,7 +114,6 @@ uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t*
 uint8_t board_assign_nonce(board_t *board){
     applog(LOG_DEBUG, "Assigning nonce");
     uint32_t nonce_step = 0xffffffffU / board->chip_nums;
-//    uint32_t nonce_step = 0x01000000U;
     uint32_t nonce = 0x00000000U;
     for (uint8_t i = 1; i <= board->chip_nums; ++i) {
         le32enc(&board->chip_array[i].start_nonce,nonce);
@@ -155,13 +154,15 @@ uint8_t board_init_chip_array(board_t *board){
         applog(LOG_DEBUG, "Chip cycle set to %d", opt_cycle);
     }
     board_assign_nonce(board);
-    applog(LOG_DEBUG, "writing to core sel");
+    applog(LOG_DEBUG, "writing to core sel for sync nonce shifting");
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
-    for (uint8_t j = 1; j <= board->chip_nums; ++j)
-        board_start_self_test(board, j);
-    applog(LOG_DEBUG, "writing to core sel");
-    board_write_reg(board, 0, CORE_SEL_REG, core_sel);
+    if (!opt_test) {
+        for (uint8_t j = 1; j <= board->chip_nums; ++j)
+            board_start_self_test(board, j);
+        applog(LOG_DEBUG, "writing to core sel for self test use.");
+        board_write_reg(board, 0, CORE_SEL_REG, core_sel);
+    }
     return 0;
 }
 uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
