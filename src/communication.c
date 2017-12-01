@@ -1,26 +1,27 @@
 #include "miner.h"
 
-uint8_t reg_size[24]= {1, 4, 2, 2, 76, 64, 2, 4, 4, 1, 1, 8, 4, 32, 32, 4, 4, 1, 6, 4, 4, 4, 2, 64};
+uint8_t reg_size[24] = {2, 4, 2, 2, 76, 64, 2, 4, 4, 1, 1, 8, 4, 32, 32, 4, 4, 1, 6, 4, 4, 4, 2, 64};
 extern long nonce_cnt;
 extern char *cmd_path, *nonce_path;
 extern uint32_t cmd_speed, nonce_speed;
 extern uint8_t opt_cycle;
 
-uint8_t board_choose_chip(board_t *board, uint8_t chip_id){
+uint8_t board_choose_chip(board_t *board, uint16_t chip_id) {
     // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
     if (board->current_chip == chip_id)
         return 0;
     applog(LOG_SERIAL, "[SERIAL_CHOSE] chip set to %d", chip_id);
     board->current_chip = chip_id;
-    uint8_t buf = 0xFF;
-    uint8_t data_in = 0x00;
+    uint16_t buf = 0xFFFF;
+    uint16_t data_in = 0x0000;
     data_in += chip_id;
+
     serial_set_parity(&board->cmd_serial, PARITY_MARK);
-    serial_write(&board->cmd_serial, &data_in, 1);
-    serial_read(&board->cmd_serial, &buf, 1, -1);
+    serial_write(&board->cmd_serial, (uint8_t *) &data_in, 2);
+    serial_read(&board->cmd_serial, (uint8_t *) &buf, 2, -1);
     if (buf != data_in) {
-        applog(LOG_ERR, "chip_choose(serial_t *serial, chip_t *chip) error:%02x->%02x", data_in, buf);
-        serial_read(&board->cmd_serial, &buf, 32, 100);
+        applog(LOG_ERR, "chip_choose(serial_t *serial, chip_t *chip) error:%04x->%04x", data_in, buf);
+        serial_read(&board->cmd_serial, (uint8_t *) &buf, 32, 100);
         serial_close(&board->cmd_serial);
         serial_close(&board->nonce_serial);
         exit(1);
@@ -44,14 +45,15 @@ uint8_t board_open_serials(board_t *board, char* cmd_serial_path, uint32_t cmd_s
     }
     return 1;
 }
-uint8_t board_write_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t* src){
+
+uint8_t board_write_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_t *src) {
 // read a chip's certain reg
 // TX: 0 1000 xxxx
 //     0 xxxx xxxx * n
 //
     uint8_t len = reg_size[reg_type];
     uint8_t cmd_msg = 0x80;
-    board_choose_chip(board,chip_id);
+    board_choose_chip(board, chip_id);
     uint8_t read_buf[len+1];
     cmd_msg += reg_type;
     serial_set_parity(&board->cmd_serial, PARITY_SPACE);
@@ -72,7 +74,8 @@ uint8_t board_write_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t
     }
     return 0;
 }
-uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t* dst){
+
+uint8_t board_read_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_t *dst) {
     // read a certain chip's reg on one serial;
 // 0 0000 xxxx
 // 0 xxxx xxxx(read data)
@@ -129,13 +132,13 @@ uint8_t board_init_chip_array(board_t *board){
     applog(LOG_DEBUG, "Start initiate board");
     if (!board_open_serials(board, cmd_path, cmd_speed, nonce_path, nonce_speed))
         exit(1);
-    uint8_t data_in = 0x80;
-    uint8_t* buf = malloc(1);
+    uint8_t data_in[2] = {0x80, 0x00};
+    uint8_t *buf = malloc(2);
     serial_set_parity(&board->cmd_serial, PARITY_MARK);
     board_hard_reset(board);
-    serial_write(&board->cmd_serial, &data_in, 1);
-    serial_read(&board->cmd_serial, buf, 1, -1);
-    board->chip_nums = (uint8_t) (*(buf) - 0x80);
+    serial_write(&board->cmd_serial, data_in, 2);
+    serial_read(&board->cmd_serial, buf, 2, -1);
+    board->chip_nums = (uint16_t) (*(buf) & 0x0fff);
     free(buf);
     if (!board->chip_nums) {
         applog(LOG_ERR, "This chip has initiated.");
@@ -143,11 +146,11 @@ uint8_t board_init_chip_array(board_t *board){
     }
     applog(LOG_INFO,"miner has %d chips, serial open succeeded", board->chip_nums);
 //      i = 0 means broadcast address
-    for (uint8_t i = 0; i < board->chip_nums; ++i)
+    for (uint16_t i = 0; i < board->chip_nums; ++i)
         *board->chip_array[i].chip_id = i;
 
 //    make sure next choose can choose all chip
-    board->current_chip = 0xFF;
+    board->current_chip = 0xFFFF;
     board_reset(board, 0);
     if (!jsonrpc_2) {
         board_write_reg(board, 0, CYCLES_REG, &opt_cycle);
@@ -165,7 +168,8 @@ uint8_t board_init_chip_array(board_t *board){
     }
     return 0;
 }
-uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
+
+uint8_t board_start_self_test(board_t *board, uint16_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
     //             1      0       0       1       1       0       0       0
@@ -177,7 +181,7 @@ uint8_t board_start_self_test(board_t *board, uint8_t chip_id){
     sleep(1);
     board_read_reg(board, chip_id, CTRL_REG, test_cmd);
     if (test_cmd[1]&0x01) {
-        applog(LOG_ERR, "chip %d error", chip_id);
+        applog(LOG_ERR, "chip %d error, sending disable command.", chip_id);
         uint8_t disable_chip_cmd[2] = {0x80, 0x00};
         board_write_reg(board, chip_id, CTRL_REG, disable_chip_cmd);
         board->chip_array[chip_id].disable = 1;
@@ -192,18 +196,20 @@ uint8_t board_set_target(board_t *board){
     board_write_reg(board, 0, TARGET_REG, board->chip_array->target);
     return 0;
 }
-uint8_t board_set_data_in(board_t *board, uint8_t chip_id){
+
+uint8_t board_set_data_in(board_t *board, uint16_t chip_id) {
     applog(LOG_DEBUG, "Sending new data to board");
     board_write_reg(board, chip_id, DATA_IN_REG, board->chip_array[chip_id].data_in);
     return 0;
 }
-uint8_t board_set_workid(board_t *board, uint8_t chip_id){
+
+uint8_t board_set_workid(board_t *board, uint16_t chip_id) {
     applog(LOG_DEBUG, "Sending workid to board");
     board_write_reg(board, chip_id, WORK_ID_REG, board->chip_array[chip_id].work_id);
     return 0;
 }
 
-uint8_t board_reset(board_t *board, uint8_t chip_id) {
+uint8_t board_reset(board_t *board, uint16_t chip_id) {
 //    read firstly, use "and" to START bit to combine.
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
@@ -216,7 +222,7 @@ uint8_t board_reset(board_t *board, uint8_t chip_id) {
     return 0;
 }
 
-uint8_t board_start(board_t *board, uint8_t chip_id) {
+uint8_t board_start(board_t *board, uint16_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
     //             1      1       0       1       0       0       0       0
@@ -257,7 +263,8 @@ uint8_t board_wait_for_nonce(board_t *board){
     }
     return 0;
 }
-uint8_t board_get_fifo(board_t *board, uint8_t chip_id){
+
+uint8_t board_get_fifo(board_t *board, uint16_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
     //             1      0       0       1       0       0       0       0
@@ -294,7 +301,8 @@ uint8_t board_display_counter(board_t *board){
     }
     return 0;
 }
-uint8_t board_flush_fifo(board_t *board, uint8_t chip_id){
+
+uint8_t board_flush_fifo(board_t *board, uint16_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
     //             1      0       0       0       0       0       0       0
@@ -305,7 +313,8 @@ uint8_t board_flush_fifo(board_t *board, uint8_t chip_id){
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
     return 0;
 }
-uint8_t board_soft_reset_chip(board_t *board, uint8_t chip_id){
+
+uint8_t board_soft_reset_chip(board_t *board, uint16_t chip_id) {
     //    read firstly, use "and" to START bit to combine.
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
