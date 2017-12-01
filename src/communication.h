@@ -8,7 +8,7 @@
 #include "serial.h"
 
 typedef enum reg {
-    CHIP_ID_REG,            //1				0
+    CHIP_ID_REG,            //2				0
     PLL_REG,                //4				1
     BAUDRATE_REG,           //2				2
     CTRL_REG,               //2				3
@@ -40,7 +40,7 @@ typedef enum reg {
 } reg_t;
 typedef struct chip_info {
     uint8_t disable;
-    uint8_t chip_id[1];
+    uint16_t chip_id[2];
     uint8_t pll[4];
     uint8_t baudrate[2];
     uint8_t ctrl[2];
@@ -66,33 +66,45 @@ typedef struct chip_info {
 typedef struct board_info {
     serial_t cmd_serial;
     serial_t nonce_serial;
-    uint8_t chip_nums;
-    chip_t chip_array[128];
+    uint16_t chip_nums;
+    chip_t chip_array[65535];
     uint8_t nonce[4];
     uint8_t work_id[4];
-    uint8_t current_chip;
+    uint16_t current_chip;
     uint8_t hash[32];
     volatile uint8_t *restart_flag;
 } board_t;
 uint8_t board_open_serials(board_t *board, char* cmd_serial_path, uint32_t cmd_serial_speed, char* nonce_serial_path, uint32_t nonce_serial_speed);
 uint8_t board_init_chip_array(board_t *board);
-uint8_t board_write_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t* src);
-uint8_t board_read_reg(board_t *board, uint8_t chip_id, reg_t reg_type, uint8_t* dst);
-uint8_t board_reset(board_t *board, uint8_t chip_id);
-uint8_t board_start(board_t *board, uint8_t chip_id);
+
+uint8_t board_write_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_t *src);
+
+uint8_t board_read_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_t *dst);
+
+uint8_t board_reset(board_t *board, uint16_t chip_id);
+
+uint8_t board_start(board_t *board, uint16_t chip_id);
 uint8_t board_assign_nonce(board_t *board);
 uint8_t board_get_nonce_state(board_t *board);
 uint8_t board_set_target(board_t *board);
-uint8_t board_set_workid(board_t *board, uint8_t chip_id);
+
+uint8_t board_set_workid(board_t *board, uint16_t chip_id);
 uint8_t board_wait_for_nonce(board_t *board);
-uint8_t board_set_data_in(board_t *board, uint8_t chip_id);
-uint8_t board_choose_chip(board_t *board, uint8_t chip_id);
-uint8_t board_get_fifo(board_t *board, uint8_t chip_id);
+
+uint8_t board_set_data_in(board_t *board, uint16_t chip_id);
+
+uint8_t board_choose_chip(board_t *board, uint16_t chip_id);
+
+uint8_t board_get_fifo(board_t *board, uint16_t chip_id);
 uint8_t board_display_rate(board_t *board);
 uint8_t board_display_counter(board_t *board);
-uint8_t board_soft_reset_chip(board_t *board, uint8_t chip_id);
-uint8_t board_start_self_test(board_t *board, uint8_t chip_id);
-uint8_t board_flush_fifo(board_t *board, uint8_t chip_id);
-uint8_t board_debug_chips(board_t *board, uint8_t chip_id, reg_t reg_type);
+
+uint8_t board_soft_reset_chip(board_t *board, uint16_t chip_id);
+
+uint8_t board_start_self_test(board_t *board, uint16_t chip_id);
+
+uint8_t board_flush_fifo(board_t *board, uint16_t chip_id);
+
+uint8_t board_debug_chips(board_t *board, uint16_t chip_id, reg_t reg_type);
 uint8_t board_hard_reset(board_t *board);
 #endif
