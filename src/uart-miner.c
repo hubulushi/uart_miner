@@ -675,24 +675,26 @@ static void *uart_miner_thread(void *userdata) {
                 memcpy(upload_work.hash, board->hash, 32);
 
             if (opt_test) {
+                work_t test_work = upload_work;
                 switch (opt_algo) {
                     case ALGO_X11:
-                        cryptonight_hash(upload_work.hash, upload_work.data);
+                        cryptonight_hash(test_work.hash, test_work.data);
                         break;
                     case ALGO_XMR:
-                        x11_hash(upload_work.hash, upload_work.data);
+                        x11_hash(test_work.hash, test_work.data);
                         break;
                     case ALGO_SCRYPT:
-                        scrypt_hash(upload_work.hash, upload_work.data);
+                        scrypt_hash(test_work.hash, test_work.data);
                         break;
                     default:
 //                        should never happen
                         exit(-1);
                 }
                 if (jsonrpc_2)
-                    applog(LOG_DEBUG, "cpu: %s, uart: %s", abin2hex(upload_work.hash, 32), abin2hex(board->hash, 32));
+                    applog(LOG_DEBUG, "nonce, %s, uart: %s, cpu: %s", abin2hex((uint8_t *) test_work.data + nonce_offset, 4), abin2hex(board->hash, 32), abin2hex(test_work.hash, 32));
                 else
-                    applog(LOG_DEBUG, "cpu: %s, nonce: %s", abin2hex(upload_work.hash, 32), abin2hex(board->nonce, 4));
+                    applog(LOG_DEBUG, "nonce, %s, cpu: %s", abin2hex((uint8_t *) test_work.data + nonce_offset, 4), abin2hex(test_work.hash, 32));
+
             }
             if (!submit_work(mythr, &upload_work))
                 break;
