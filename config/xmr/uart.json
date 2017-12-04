@@ -1,0 +1,11 @@
+{
+  "url": "stratum+tcp://xmrpool.eu:3333",
+  "userpass": "437ZXT6x2xt8dZJpoowFKT4CMn8jrmVP1iT7jPmUuatt7bKc1ExzZcSi9NFekqcmWgYfZNU63oLeaeaEFpWf7etWF3iZk5D:x",
+  "algo": "xmr",
+  "cmd-path": "/dev/ttyUSB0:115200",
+  "nonce-path": "/dev/ttyUSB1:115200",
+  "debug": true,
+  "serial_debug": true,
+  "stratum_debug": true,
+  "show-diff": true
+}

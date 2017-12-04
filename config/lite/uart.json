@@ -1,0 +1,13 @@
+{
+  "url": "stratum+tcp://ispace.co.uk:4112",
+  "userpass": "sequencer:x",
+  "cmd-path": "/dev/ttyUSB0:115200",
+  "nonce-path": "/dev/ttyUSB1:115200",
+  "_test_data": "2000000035c28d4319f6d577df902ff93d067c088836537eee30d217fc54a09f801f46dd83fa1aac228c2d98b52b934b882bc696b34507781b7e0205edbf882cca9b7cae5a03f70b1a103cc6",
+  "_test_target": "fffffffffff00000",
+  "algo": "scrypt",
+  "debug": true,
+  "serial_debug": true,
+  "stratum_debug": true,
+  "show-diff": true
+}

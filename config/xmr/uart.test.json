@@ -1,0 +1,12 @@
+{
+  "algo": "xmr",
+  "cmd-path": "/dev/ttyUSB0:115200",
+  "nonce-path": "/dev/ttyUSB1:115200",
+  "test_data": "0606abd0afce05d0dee05fac0f65305a345a72a5cc39ed588293e8c86ae50f61f11fad4abd0b435700000097c78deccf06247dfec13065cfb51cb395455c39fbc742f65aafed045b70117b08",
+  "test_target": "ffffffffffffffff",
+  "chip_cycle": 255,
+  "debug": true,
+  "serial_debug": true,
+  "stratum_debug": true,
+  "show-diff": true
+}

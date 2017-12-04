@@ -504,7 +504,6 @@ static void *miner_thread(void *userdata) {
         int nonce_oft = 19 * sizeof(uint32_t); // 76
         int wkcmp_sz = nonce_oft;
         int rc = 0;
-
         if (jsonrpc_2)
             wkcmp_sz = nonce_oft = 39;
 
@@ -515,7 +514,7 @@ static void *miner_thread(void *userdata) {
 
         // to clean: is g_work loaded before the memcmp ?
         regen_work = regen_work || ((*nonceptr) >= end_nonce && !(memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], (size_t) wkcmp_sz) || jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0));
-        if (regen_work) {
+        if (regen_work & !opt_test) {
             stratum_gen_work(&stratum, &g_work);
         }
         if (memcmp(&work.data[wkcmp_offset], &g_work.data[wkcmp_offset], (size_t) wkcmp_sz) || jsonrpc_2 ? memcmp(((uint8_t *) work.data) + 43, ((uint8_t *) g_work.data) + 43, 33) : 0) {
@@ -675,26 +674,25 @@ static void *uart_miner_thread(void *userdata) {
                 memcpy(upload_work.hash, board->hash, 32);
 
             if (opt_test) {
-                work_t test_work = upload_work;
+                uchar hash[32];
                 switch (opt_algo) {
-                    case ALGO_X11:
-                        cryptonight_hash(test_work.hash, test_work.data);
-                        break;
                     case ALGO_XMR:
-                        x11_hash(test_work.hash, test_work.data);
+                        cryptonight_hash(hash, upload_work.data);
+                        break;
+                    case ALGO_X11:
+                        x11_hash(hash, upload_work.data);
                         break;
                     case ALGO_SCRYPT:
-                        scrypt_hash(test_work.hash, test_work.data);
+                        scrypt_hash(hash, upload_work.data);
                         break;
                     default:
 //                        should never happen
                         exit(-1);
                 }
                 if (jsonrpc_2)
-                    applog(LOG_DEBUG, "nonce, %s, uart: %s, cpu: %s", abin2hex((uint8_t *) test_work.data + nonce_offset, 4), abin2hex(board->hash, 32), abin2hex(test_work.hash, 32));
+                    applog(LOG_DEBUG, "nonce, %s, uart: %s, cpu: %s", abin2hex((uint8_t *) upload_work.data + nonce_offset, 4), abin2hex(board->hash, 32), abin2hex(hash, 32));
                 else
-                    applog(LOG_DEBUG, "nonce, %s, cpu: %s", abin2hex((uint8_t *) test_work.data + nonce_offset, 4), abin2hex(test_work.hash, 32));
-
+                    applog(LOG_DEBUG, "nonce, %s, cpu: %s", abin2hex((uint8_t *) upload_work.data + nonce_offset, 4), abin2hex(hash, 32));
             }
             if (!submit_work(mythr, &upload_work))
                 break;
@@ -772,7 +770,7 @@ void restart_threads(void) {
 
 static void *test_stratum_thread(void *userdata) {
     struct thr_info *mythr = (struct thr_info *) userdata;
-
+    free(mythr);
     memcpy(g_work.data, test_data, 76);
     memcpy(g_work.target + 6, test_target, 8);
     return NULL;
