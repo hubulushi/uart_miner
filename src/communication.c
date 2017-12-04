@@ -10,18 +10,19 @@ uint8_t board_choose_chip(board_t *board, uint16_t chip_id) {
     // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
     if (board->current_chip == chip_id)
         return 0;
-    applog(LOG_SERIAL, "[SERIAL_CHOSE] chip set to %d", chip_id);
-    board->current_chip = chip_id;
-    uint16_t buf = 0xFFFF;
-    uint16_t data_in = 0x0000;
-    data_in += chip_id;
 
+    board->current_chip = chip_id;
+    uint8_t buf[2] = {0xFF, 0xFF};
+    uint8_t data_in[2] = {0x00, 0x00};
+    data_in[1] = (uint8_t) chip_id;
+    data_in[0] = (uint8_t) chip_id >> 8;
+    applog(LOG_SERIAL, "[SERIAL_CHOSE] chip set to %d, sent: %s", chip_id, abin2hex(data_in, 2));
     serial_set_parity(&board->cmd_serial, PARITY_MARK);
-    serial_write(&board->cmd_serial, (uint8_t *) &data_in, 2);
-    serial_read(&board->cmd_serial, (uint8_t *) &buf, 2, -1);
-    if (buf != data_in) {
-        applog(LOG_ERR, "chip_choose(serial_t *serial, chip_t *chip) error:%04x->%04x", data_in, buf);
-        serial_read(&board->cmd_serial, (uint8_t *) &buf, 32, 100);
+    serial_write(&board->cmd_serial, data_in, 2);
+    serial_read(&board->cmd_serial, buf, 2, -1);
+    if (memcmp(buf, data_in, 2)) {
+        applog(LOG_ERR, "chip_choose(serial_t *serial, chip_t *chip) error:%02x->%02x", *data_in, *buf);
+        serial_read(&board->cmd_serial, buf, 32, 100);
         serial_close(&board->cmd_serial);
         serial_close(&board->nonce_serial);
         exit(1);
@@ -137,8 +138,16 @@ uint8_t board_init_chip_array(board_t *board){
     serial_set_parity(&board->cmd_serial, PARITY_MARK);
     board_hard_reset(board);
     serial_write(&board->cmd_serial, data_in, 2);
+    char *hex = abin2hex(data_in, 2);
+    applog(LOG_SERIAL, "[SERIAL_WRITE] initiate chip, sent: %s", hex);
     serial_read(&board->cmd_serial, buf, 2, -1);
-    board->chip_nums = (uint16_t) (*(buf) & 0x0fff);
+    hex = abin2hex(buf, 2);
+    applog(LOG_SERIAL, "[SERIAL_WRITE] initiate chip, received: %s", hex);
+    *buf = *buf ^ *(buf + 1);
+    *(buf + 1) = *(buf + 1) ^ *buf;
+    *buf = *(buf + 1) ^ *buf;
+    *(buf + 1) &= 0x7f;
+    memcpy(&board->chip_nums, buf, 2);
     free(buf);
     if (!board->chip_nums) {
         applog(LOG_ERR, "This chip has initiated.");
@@ -160,7 +169,7 @@ uint8_t board_init_chip_array(board_t *board){
     applog(LOG_DEBUG, "writing to core sel for sync nonce shifting");
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
-    if (!opt_test) {
+    if (!opt_test && !jsonrpc_2) {
         for (uint8_t j = 1; j <= board->chip_nums; ++j)
             board_start_self_test(board, j);
         applog(LOG_DEBUG, "writing to core sel for self test use.");
