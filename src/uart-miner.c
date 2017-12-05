@@ -768,9 +768,7 @@ void restart_threads(void) {
     work_restart[0].restart = 1;
 }
 
-static void *test_stratum_thread(void *userdata) {
-    struct thr_info *mythr = (struct thr_info *) userdata;
-    free(mythr);
+static void *test_stratum_thread() {
     memcpy(g_work.data, test_data, 76);
     memcpy(g_work.target + 6, test_target, 8);
     return NULL;
