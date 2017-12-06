@@ -169,7 +169,7 @@ uint8_t board_init_chip_array(board_t *board){
     applog(LOG_DEBUG, "writing to core sel for sync nonce shifting");
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
-    if (!opt_test && !jsonrpc_2) {
+    if (!jsonrpc_2) {
         for (uint8_t j = 1; j <= board->chip_nums; ++j)
             board_start_self_test(board, j);
         applog(LOG_DEBUG, "writing to core sel for self test use.");
@@ -226,7 +226,7 @@ uint8_t board_reset(board_t *board, uint16_t chip_id) {
     //BYTE0     ENABLE   RSV     RSV     RSV     RSV    FLUSH   RESART   ERR
     //             1      0       0       0       0       0       0       0
     applog(LOG_DEBUG, "Sending reset command to %d", chip_id);
-    uint8_t reset_cmd[2] = {0x90, 0x80};
+    uint8_t reset_cmd[2] = {0x90, 0x86};
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
     return 0;
 }

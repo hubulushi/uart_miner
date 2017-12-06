@@ -674,25 +674,33 @@ static void *uart_miner_thread(void *userdata) {
                 memcpy(upload_work.hash, board->hash, 32);
 
             if (opt_test) {
-                uchar hash[32];
+                work_t test_work;
+                memset(&test_work, 0, sizeof(work));
+                work_copy(&test_work, &upload_work);
+                //only for x11
+                uint32_t endiandata[20];
+                uint32_t *pdata = test_work.data;
+
                 switch (opt_algo) {
                     case ALGO_XMR:
-                        cryptonight_hash(hash, upload_work.data);
+                        cryptonight_hash(test_work.hash, test_work.data);
                         break;
                     case ALGO_X11:
-                        x11_hash(hash, upload_work.data);
+                        for (int k = 0; k < 20; k++)
+                            be32enc(&endiandata[k], pdata[k]);
+                        x11_hash(test_work.hash, endiandata);
                         break;
                     case ALGO_SCRYPT:
-                        scrypt_hash(hash, upload_work.data);
+                        scrypt_hash(test_work.hash, test_work.data);
                         break;
                     default:
 //                        should never happen
                         exit(-1);
                 }
                 if (jsonrpc_2)
-                    applog(LOG_DEBUG, "nonce, %s, uart: %s, cpu: %s", abin2hex((uint8_t *) upload_work.data + nonce_offset, 4), abin2hex(board->hash, 32), abin2hex(hash, 32));
+                    applog(LOG_DEBUG, "nonce, %s, uart: %s, cpu: %s", abin2hex((uint8_t *) test_work.data + nonce_offset, 4), abin2hex(board->hash, 32), abin2hex(test_work.hash, 32));
                 else
-                    applog(LOG_DEBUG, "nonce, %s, cpu: %s", abin2hex((uint8_t *) upload_work.data + nonce_offset, 4), abin2hex(hash, 32));
+                    applog(LOG_DEBUG, "nonce, %s, cpu: %s", abin2hex((uint8_t *) test_work.data + nonce_offset, 4), abin2hex(test_work.hash, 32));
             }
             if (!submit_work(mythr, &upload_work))
                 break;
