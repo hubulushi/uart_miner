@@ -6,37 +6,32 @@
 #include <string.h>
 #include <stdio.h>
 #include "serial.h"
-
 typedef enum reg {
-    CHIP_ID_REG,            //2				0
-    PLL_REG,                //4				1
-    BAUDRATE_REG,           //2				2
-    CTRL_REG,               //2				3
-
-    DATA_IN_REG,            //76			4
-    DATA_OUT_REG,           //64			5
-    CORE_SEL_REG,           //2				6
-    START_NONCE_REG,        //4				7
-
-    STOP_NONCE_REG,         //4				8
-    CYCLES_REG,             //1				9
-    DIFF_REG,               //1(6bit)		10
-    TARGET_REG,             //8				11
-
-    DATA_IN_VERSION_REG,    //4				12
-    DATA_IN_PREV_HASH_REG,  //32			13
-    DATA_IN_MERKLE_ROOT_REG,//32			14
-    DATA_IN_NTIME_REG,      //4				15
-
-    DATA_IN_NBITS_REG,      //4				16
-    WORK_ID_REG,            //1				17
-    HASH_COUNTER_REG,       //6				18
-    NONCE_COUNTER_REG,      //4				19
-
-    HASH_RATE_REG,            //4				20
-    NONCE_RATE_REG,            //4				21
-    BAUDRATE_DETECTED_REG,  //2				22
-    HASH_OUT_REG,           //64			23
+    CHIP_ID_REG,
+    PLL_REG,
+    BAUDRATE_REG,
+    CTRL_REG,
+    DATA_IN_REG,
+    DATA_OUT_REG,
+    CORE_SEL_REG,
+    START_NONCE_REG,
+    STOP_NONCE_REG,
+    CYCLES_REG,
+    DIFF_REG,
+    TARGET_REG,
+    DATA_IN_VERSION_REG,
+    DATA_IN_PREV_HASH_REG,
+    DATA_IN_MERKLE_ROOT_REG,
+    DATA_IN_NTIME_REG,
+    DATA_IN_NBITS_REG,
+    WORK_ID_REG,
+    HASH_COUNTER_REG,
+    NONCE_COUNTER_REG,
+    HASH_RATE_REG,
+    NONCE_RATE_REG,
+    BAUDRATE_DETECTED_REG,
+    HASH_OUT_REG,
+    CORE_ENABLE_REG
 } reg_t;
 typedef struct chip_info {
     uint8_t disable;
@@ -76,35 +71,25 @@ typedef struct board_info {
 } board_t;
 uint8_t board_open_serials(board_t *board, char* cmd_serial_path, uint32_t cmd_serial_speed, char* nonce_serial_path, uint32_t nonce_serial_speed);
 uint8_t board_init_chip_array(board_t *board);
-
 uint8_t board_write_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_t *src);
-
 uint8_t board_read_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_t *dst);
-
 uint8_t board_reset(board_t *board, uint16_t chip_id);
-
 uint8_t board_start(board_t *board, uint16_t chip_id);
 uint8_t board_assign_nonce(board_t *board);
 uint8_t board_get_nonce_state(board_t *board);
 uint8_t board_set_target(board_t *board);
-
 uint8_t board_set_workid(board_t *board, uint16_t chip_id);
+
+uint8_t board_enable_subcore(board_t *board, uint16_t chip_id, uint16_t subcore);
 uint8_t board_wait_for_nonce(board_t *board);
-
 uint8_t board_set_data_in(board_t *board, uint16_t chip_id);
-
 uint8_t board_choose_chip(board_t *board, uint16_t chip_id);
-
 uint8_t board_get_fifo(board_t *board, uint16_t chip_id);
 uint8_t board_display_rate(board_t *board);
 uint8_t board_display_counter(board_t *board);
-
 uint8_t board_soft_reset_chip(board_t *board, uint16_t chip_id);
-
 uint8_t board_start_self_test(board_t *board, uint16_t chip_id);
-
 uint8_t board_flush_fifo(board_t *board, uint16_t chip_id);
-
 uint8_t board_debug_chips(board_t *board, uint16_t chip_id, reg_t reg_type);
 uint8_t board_hard_reset(board_t *board);
 #endif

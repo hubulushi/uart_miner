@@ -1,16 +1,13 @@
 #include "miner.h"
 
-uint8_t reg_size[24] = {2, 4, 2, 2, 76, 64, 2, 4, 4, 1, 1, 8, 4, 32, 32, 4, 4, 1, 6, 4, 4, 4, 2, 64};
+extern uint8_t reg_size[25];
 extern long nonce_cnt;
 extern char *cmd_path, *nonce_path;
 extern uint32_t cmd_speed, nonce_speed;
 extern uint8_t opt_cycle;
-
 uint8_t board_choose_chip(board_t *board, uint16_t chip_id) {
-    // TX: 1 0xxx xxxx (for example 1 0000 0001 is select No.1 chip; 1 0000 0000 means select all lines)
     if (board->current_chip == chip_id)
         return 0;
-
     board->current_chip = chip_id;
     uint8_t buf[2] = {0xFF, 0xFF};
     uint8_t data_in[2] = {0x00, 0x00};
@@ -46,7 +43,6 @@ uint8_t board_open_serials(board_t *board, char* cmd_serial_path, uint32_t cmd_s
     }
     return 1;
 }
-
 uint8_t board_write_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_t *src) {
 // read a chip's certain reg
 // TX: 0 1000 xxxx
@@ -75,7 +71,6 @@ uint8_t board_write_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_
     }
     return 0;
 }
-
 uint8_t board_read_reg(board_t *board, uint16_t chip_id, reg_t reg_type, uint8_t *dst) {
     // read a certain chip's reg on one serial;
 // 0 0000 xxxx
@@ -169,7 +164,11 @@ uint8_t board_init_chip_array(board_t *board){
     applog(LOG_DEBUG, "writing to core sel for sync nonce shifting");
     uint8_t core_sel[2] = {0x01, 0x00};
     board_write_reg(board, 0, CORE_SEL_REG, core_sel);
-    if (!jsonrpc_2) {
+    if (opt_test && opt_algo == ALGO_SCRYPT) {
+        uint16_t temp = 1;
+        board_enable_subcore(board, 0, temp);
+    }
+    if (opt_algo == ALGO_X11) {
         for (uint8_t j = 1; j <= board->chip_nums; ++j)
             board_start_self_test(board, j);
         applog(LOG_DEBUG, "writing to core sel for self test use.");
@@ -177,7 +176,6 @@ uint8_t board_init_chip_array(board_t *board){
     }
     return 0;
 }
-
 uint8_t board_start_self_test(board_t *board, uint16_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
@@ -205,19 +203,22 @@ uint8_t board_set_target(board_t *board){
     board_write_reg(board, 0, TARGET_REG, board->chip_array->target);
     return 0;
 }
-
 uint8_t board_set_data_in(board_t *board, uint16_t chip_id) {
     applog(LOG_DEBUG, "Sending new data to board");
     board_write_reg(board, chip_id, DATA_IN_REG, board->chip_array[chip_id].data_in);
     return 0;
 }
-
 uint8_t board_set_workid(board_t *board, uint16_t chip_id) {
     applog(LOG_DEBUG, "Sending workid to board");
     board_write_reg(board, chip_id, WORK_ID_REG, board->chip_array[chip_id].work_id);
     return 0;
 }
 
+uint8_t board_enable_subcore(board_t *board, uint16_t chip_id, uint16_t subcore) {
+    applog(LOG_DEBUG, "setting subcore");
+    board_write_reg(board, chip_id, CORE_ENABLE_REG, (uint8_t *) &subcore);
+    return 0;
+}
 uint8_t board_reset(board_t *board, uint16_t chip_id) {
 //    read firstly, use "and" to START bit to combine.
     //CTRL_REG:
@@ -230,7 +231,6 @@ uint8_t board_reset(board_t *board, uint16_t chip_id) {
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
     return 0;
 }
-
 uint8_t board_start(board_t *board, uint16_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
@@ -272,7 +272,6 @@ uint8_t board_wait_for_nonce(board_t *board){
     }
     return 0;
 }
-
 uint8_t board_get_fifo(board_t *board, uint16_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
@@ -310,7 +309,6 @@ uint8_t board_display_counter(board_t *board){
     }
     return 0;
 }
-
 uint8_t board_flush_fifo(board_t *board, uint16_t chip_id) {
     //CTRL_REG:
     //BYTE1    N_OUTPUT START DIFF_TYPE RESET   TEST    FIFO2   FIFO1   FIFO0
@@ -322,7 +320,6 @@ uint8_t board_flush_fifo(board_t *board, uint16_t chip_id) {
     board_write_reg(board, chip_id, CTRL_REG, reset_cmd);
     return 0;
 }
-
 uint8_t board_soft_reset_chip(board_t *board, uint16_t chip_id) {
     //    read firstly, use "and" to START bit to combine.
     //CTRL_REG:

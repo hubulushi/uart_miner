@@ -241,10 +241,11 @@ enum algos {
     ALGO_X11,         /* X11 */
     ALGO_XMR,
     ALGO_SCRYPT,
+    ALGO_SHA256D,
     ALGO_COUNT
 };
 
-static const char *algo_names[] = {"x11", "xmr", "scrypt", "\0"};
+static const char *algo_names[] = {"x11", "xmr", "scrypt", "sha256d", "\0"};
 extern enum algos opt_algo;
 
 #define JSON_RPC_LONGPOLL	(1 << 0)
@@ -353,11 +354,15 @@ int scanhash_cryptonight(int thr_id, work_t *work, uint32_t max_nonce, uint64_t 
 
 int scanhash_scrypt(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
 
+int scanhash_sha256d(int thr_id, struct work *work, uint32_t max_nonce, uint64_t *hashes_done);
+
 void x11_hash(void *output, const void *input);
 
 void cryptonight_hash(void *output, const void *input);
 
 void scrypt_hash(void *output, const void *input);
+
+void sha256d_hash(void *output, const void *input);
 
 unsigned char *scrypt_buffer_alloc(int N);
 

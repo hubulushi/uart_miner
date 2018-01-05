@@ -1,9 +1,0 @@
-{
-  "url": "stratum+tcp://stratum-ltc.antpool.com:8888",
-  "userpass": "Sequencer.ltc:nonce",
-  "algo": "scrypt",
-  "debug": true,
-  "serial_debug": true,
-  "stratum_debug": true,
-  "show-diff": true
-}
